@@ -1,0 +1,96 @@
+// {
+//   "version": "0.2.0",
+//   "configurations": [
+//       {
+//           "name": "postgresql",
+//           "type": "cppdbg",
+//           "request": "attach",
+//           "program": "/Users/rc/pgsql/PGDev/target-debug/bin/postgres", //输入你的postgres可执行文件地址，在$PGHOME/bin目录下
+//           "processId": "${command:pickProcess}",
+//           "MIMode": "gdb",
+//           "setupCommands": [
+//               {
+//                   "description": "Enable pretty-printing for gdb",
+//                   "text": "-enable-pretty-printing",
+//                   "ignoreFailures": true
+//               },
+//               {
+//                   "description":  "Set Disassembly Flavor to Intel",
+//                   "text": "-gdb-set disassembly-flavor intel",
+//                   "ignoreFailures": true
+//               }
+//       ]
+//       }
+//   ]
+// }
+
+{
+  "version": "0.2.0",
+  "configurations": [
+      {
+          "name": "postgresql",
+          "type": "cppdbg",
+          "request": "attach",
+          "program": "/Users/rc/pgsql/PGDev/target-debug/bin/postgres", //输入你的postgres可执行文件地址，在$PGHOME/bin目录下
+          "processId": "${command:pickProcess}",
+          "MIMode": "lldb",
+          "targetArchitecture": "arm64",
+          "setupCommands": [
+              {
+                  "description": "Enable pretty-printing for gdb",
+                  "text": "-enable-pretty-printing",
+                  "ignoreFailures": true
+              },
+              {
+                  "description":  "Set Disassembly Flavor to Intel",
+                  "text": "-gdb-set disassembly-flavor intel",
+                  "ignoreFailures": true
+              }
+      ]
+      }
+  ]
+}
+
+// {
+//   "version": "0.2.0",
+//   "configurations": [
+//       {
+//           "name": "PostgreSQL (lldb)",
+//           "type": "cppdbg",
+//           "request": "attach",
+//           "program": "/Users/rc/pgsql/PGDev/target-debug/bin/postgres",
+//           "processId": "${command:pickProcess}",
+//           "miDebuggerPath": "/usr/bin/lldb",
+//           "setupCommands": [
+//               {
+//                   "description": "Enable pretty-printing for lldb",
+//                   "text": "-enable-pretty-printing",
+//                   "ignoreFailures": true
+//               }
+//           ]
+//       }
+//   ]
+// }
+
+// {
+//   "version": "0.2.0",
+//   "configurations": [
+//       {
+//           "name": "PostgreSQL (lldb)",
+//           "type": "cppdbg",
+//           "request": "attach",
+//           "program": "/Users/rc/pgsql/PGDev/target-debug/bin/postgres",
+//           "processId": "${command:pickProcess}",
+//           "miDebuggerPath": "/usr/bin/lldb",
+//           "miDebuggerServerAddress": "localhost:1234",
+//           "useExtendedRemote": true,
+//           "setupCommands": [
+//               {
+//                   "description": "Enable pretty-printing for lldb",
+//                   "text": "-enable-pretty-printing",
+//                   "ignoreFailures": true
+//               }
+//           ]
+//       }
+//   ]
+// }

@@ -1,0 +1,1 @@
+/Users/jqin/PGDev/postgresql-12.5/tmp_install/Users/jqin/PGDev/target-debug/bin/postgres "-D" "/Users/jqin/PGDev/postgresql-12.5/./tmp_check/data" "-F" "-c" "listen_addresses=" "-k" "/tmp/pg_regress-xD87CT"
