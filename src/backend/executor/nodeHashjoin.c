@@ -162,19 +162,21 @@ static void ExecParallelHashJoinPartitionOuter(HashJoinState *node);
  * ----------------------------------------------------------------
  */
 static pg_attribute_always_inline TupleTableSlot *
+// PlanState *pstate：指向当前计划节点的状态
+// bool parallel：一个布尔值，指示是否以并行方式执行哈希连接
 ExecHashJoinImpl(PlanState *pstate, bool parallel)
 {
-	HashJoinState *node = castNode(HashJoinState, pstate);
-	PlanState  *outerNode;
-	HashState  *hashNode;
-	ExprState  *joinqual;
-	ExprState  *otherqual;
-	ExprContext *econtext;
+	HashJoinState *node = castNode(HashJoinState, pstate);  // 将 pstate 转换为 HashJoinState 类型的指针
+	PlanState  *outerNode;  // 外部计划状态
+	HashState  *hashNode;  // 内部计划状态
+	ExprState  *joinqual;  // 连接条件
+	ExprState  *otherqual;  // 其他条件
+	ExprContext *econtext;  // 表达式上下文
 	HashJoinTable hashtable;
 	TupleTableSlot *outerTupleSlot;
 	uint32		hashvalue;
 	int			batchno;
-	ParallelHashJoinState *parallel_state;
+	ParallelHashJoinState *parallel_state;  // 并行状态
 
 	/*
 	 * get information from HashJoin node
@@ -213,7 +215,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				/*
 				 * First time through: build hash table for inner relation.
 				 */
-				Assert(hashtable == NULL);
+				Assert(hashtable == NULL);  // 确保这是首次构建哈希表，哈希表变量应为NULL
 
 				/*
 				 * If the outer relation is completely empty, and it's not
@@ -241,6 +243,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				if (HJ_FILL_INNER(node))
 				{
 					/* no chance to not build the hash table */
+					// 如果是右连接，总是需要构建哈希表，因此不尝试早期退出
 					node->hj_FirstOuterTupleSlot = NULL;
 				}
 				else if (parallel)
@@ -259,9 +262,11 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						 (outerNode->plan->startup_cost < hashNode->ps.plan->total_cost &&
 						  !node->hj_OuterNotEmpty))
 				{
+					// 尝试从外部节点获取一个元组
 					node->hj_FirstOuterTupleSlot = ExecProcNode(outerNode);
 					if (TupIsNull(node->hj_FirstOuterTupleSlot))
 					{
+						// 如果外部节点为空，标记外部非空为假
 						node->hj_OuterNotEmpty = false;
 						return NULL;
 					}
@@ -269,6 +274,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->hj_OuterNotEmpty = true;
 				}
 				else
+					// 不尝试获取外部元组
 					node->hj_FirstOuterTupleSlot = NULL;
 
 				/*
@@ -276,6 +282,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * whoever gets here first will create the hash table and any
 				 * later arrivals will merely attach to it.
 				 */
+				// 创建哈希表，根据是否需要处理空值和连接类型来决定
 				hashtable = ExecHashTableCreate(hashNode,
 												node->hj_HashOperators,
 												node->hj_Collations,
@@ -287,6 +294,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * Parallel Hash, then we'll try to help hashing unless we
 				 * arrived too late.
 				 */
+				// 执行哈希节点，构建哈希表
 				hashNode->hashtable = hashtable;
 				(void) MultiExecProcNode((PlanState *) hashNode);
 
@@ -302,6 +310,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * need to remember whether nbatch has increased since we
 				 * began scanning the outer relation
 				 */
+				// 记录当前批次，以便之后检查是否增加
 				hashtable->nbatch_outstart = hashtable->nbatch;
 
 				/*
@@ -309,6 +318,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * tuple above, because ExecHashJoinOuterGetTuple will
 				 * immediately set it again.)
 				 */
+				/*
+	             * 重置 OuterNotEmpty 状态以进行扫描。
+	             * (如果上面成功提取了一个元组，因为 ExecHashJoinOuterGetTuple 会立即再次设置它。)
+	             */
 				node->hj_OuterNotEmpty = false;
 
 				if (parallel)
@@ -338,7 +351,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					continue;
 				}
 				else
-					node->hj_JoinState = HJ_NEED_NEW_OUTER;
+					node->hj_JoinState = HJ_NEED_NEW_OUTER;  // 设置下一个状态，准备处理外部元组
 
 				/* FALL THRU */
 
@@ -347,6 +360,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				/*
 				 * We don't have an outer tuple, try to get the next one
 				 */
+				// 如果没有外部元组，尝试获取下一个
 				if (parallel)
 					outerTupleSlot =
 						ExecParallelHashJoinOuterGetTuple(outerNode, node,
@@ -354,31 +368,39 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				else
 					outerTupleSlot =
 						ExecHashJoinOuterGetTuple(outerNode, node, &hashvalue);
-
+				// 如果外部元组为空，表示批处理结束或可能整个连接结束
 				if (TupIsNull(outerTupleSlot))
 				{
 					/* end of batch, or maybe whole join */
 					if (HJ_FILL_INNER(node))
 					{
 						/* set up to scan for unmatched inner tuples */
+						// 准备扫描未匹配的内部元组
 						ExecPrepHashTableForUnmatched(node);
+						// 切换到扫描未匹配内部元组的状态
 						node->hj_JoinState = HJ_FILL_INNER_TUPLES;
 					}
 					else
+						// 切换到需要获取新批次的状态
 						node->hj_JoinState = HJ_NEED_NEW_BATCH;
 					continue;
 				}
 
+				// 设置外部元组到执行上下文中
 				econtext->ecxt_outertuple = outerTupleSlot;
+				// 标记当前外部元组还未匹配
 				node->hj_MatchedOuter = false;
 
 				/*
 				 * Find the corresponding bucket for this tuple in the main
 				 * hash table or skew hash table.
 				 */
+				// 找到当前元组对应的主哈希表或倾斜哈希表中的桶
 				node->hj_CurHashValue = hashvalue;
+				// 获取当前元组所属的桶编号和批次编号
 				ExecHashGetBucketAndBatch(hashtable, hashvalue,
 										  &node->hj_CurBucketNo, &batchno);
+				// 获取当前元组所属的倾斜桶编号（如果有）
 				node->hj_CurSkewBucketNo = ExecHashGetSkewBucket(hashtable,
 																 hashvalue);
 				node->hj_CurTuple = NULL;
@@ -387,10 +409,12 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * The tuple might not belong to the current batch (where
 				 * "current batch" includes the skew buckets if any).
 				 */
+				// 如果当前元组所属的批次编号不是当前批次，并且不属于任何倾斜桶
 				if (batchno != hashtable->curbatch &&
 					node->hj_CurSkewBucketNo == INVALID_SKEW_BUCKET_NO)
 				{
 					bool		shouldFree;
+					// 提取外部元组的最小元组形式
 					MinimalTuple mintuple = ExecFetchSlotMinimalTuple(outerTupleSlot,
 																	  &shouldFree);
 
@@ -398,8 +422,13 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					 * Need to postpone this outer tuple to a later batch.
 					 * Save it in the corresponding outer-batch file.
 					 */
+					/*
+                     * 需要将这个外部元组推迟到后续批次。
+                     * 将其保存到对应的外部批次文件中。
+                     */
 					Assert(parallel_state == NULL);
 					Assert(batchno > hashtable->curbatch);
+					// 提取外部元组的最小元组形式	
 					ExecHashJoinSaveTuple(mintuple, hashvalue,
 										  &hashtable->outerBatchFile[batchno]);
 
@@ -407,10 +436,12 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						heap_free_minimal_tuple(mintuple);
 
 					/* Loop around, staying in HJ_NEED_NEW_OUTER state */
+					// 继续循环，仍然保持在 HJ_NEED_NEW_OUTER 状态
 					continue;
 				}
 
 				/* OK, let's scan the bucket for matches */
+				/* 如果当前元组属于当前批次，切换状态为扫描桶以查找匹配项 */
 				node->hj_JoinState = HJ_SCAN_BUCKET;
 
 				/* FALL THRU */
@@ -431,10 +462,11 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				}
 				else
 				{
+					// 执行哈希桶扫描。如果当前外部元组没有匹配的内部元组，则切换到处理外部连接的填充元组状态
 					if (!ExecScanHashBucket(node, econtext))
 					{
 						/* out of matches; check for possible outer-join fill */
-						node->hj_JoinState = HJ_FILL_OUTER_TUPLE;
+						node->hj_JoinState = HJ_FILL_OUTER_TUPLE;  // 设置节点状态为填充外部元组
 						continue;
 					}
 				}
@@ -451,9 +483,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * Only the joinquals determine tuple match status, but all
 				 * quals must pass to actually return the tuple.
 				 */
+				// 如果找到匹配的内部元组，首先测试非哈希条件（即其他过滤条件）
 				if (joinqual == NULL || ExecQual(joinqual, econtext))
 				{
-					node->hj_MatchedOuter = true;
+					node->hj_MatchedOuter = true;  // 标记已找到与外部元组匹配的内部元组
 
 					if (parallel)
 					{
@@ -486,17 +519,19 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					 * If we only need to join to the first matching inner
 					 * tuple, then consider returning this one, but after that
 					 * continue with next outer tuple.
+					 * 如果只需要连接到第一个匹配的内表元组，那么可以考虑返回这个元组，
+                     * 但是在此之后可以继续使用下一个外表元组。
 					 */
 					if (node->js.single_match)
 						node->hj_JoinState = HJ_NEED_NEW_OUTER;
 
 					if (otherqual == NULL || ExecQual(otherqual, econtext))
-						return ExecProject(node->js.ps.ps_ProjInfo);
+						return ExecProject(node->js.ps.ps_ProjInfo);  //执行投影操作
 					else
-						InstrCountFiltered2(node, 1);
+						InstrCountFiltered2(node, 1);  //其他条件不匹配
 				}
 				else
-					InstrCountFiltered1(node, 1);
+					InstrCountFiltered1(node, 1);  //连接条件不匹配
 				break;
 
 			case HJ_FILL_OUTER_TUPLE:
@@ -505,50 +540,64 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * The current outer tuple has run out of matches, so check
 				 * whether to emit a dummy outer-join tuple.  Whether we emit
 				 * one or not, the next state is NEED_NEW_OUTER.
+				 * 当前外部元组已耗尽匹配项，因此检查是否发出一个虚拟的外连接元组。
+                 * 不管是否发出一个，下一个状态是NEED_NEW_OUTER
 				 */
 				node->hj_JoinState = HJ_NEED_NEW_OUTER;
 
+				// 如果外部元组没有匹配过任何内部元组且当前的连接策略要求填充外部元组
 				if (!node->hj_MatchedOuter &&
 					HJ_FILL_OUTER(node))
 				{
 					/*
 					 * Generate a fake join tuple with nulls for the inner
 					 * tuple, and return it if it passes the non-join quals.
+					 * 生成一个假的连接元组，内部元组部分为NULL，
+			         * 如果这个元组通过了非连接条件的测试，则返回它
 					 */
+					// 将执行上下文中的内部元组槽设置为预定义的空元组槽
 					econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
 
+					// 如果没有其他非连接条件或者其他条件测试通过
 					if (otherqual == NULL || ExecQual(otherqual, econtext))
-						return ExecProject(node->js.ps.ps_ProjInfo);
+						return ExecProject(node->js.ps.ps_ProjInfo);  // 执行投影操作，生成最终的结果元组
 					else
-						InstrCountFiltered2(node, 1);
+						InstrCountFiltered2(node, 1);  // 如果条件测试未通过，增加过滤统计计数
 				}
 				break;
 
-			case HJ_FILL_INNER_TUPLES:
+			case HJ_FILL_INNER_TUPLES:  // 处理状态为填充内部元组的情况
 
 				/*
 				 * We have finished a batch, but we are doing right/full join,
 				 * so any unmatched inner tuples in the hashtable have to be
 				 * emitted before we continue to the next batch.
+				 * 我们已经完成了一个批次的处理，但是由于我们正在执行右连接/全连接/右反连接，
+			     * 因此必须在继续下一个批次之前发出哈希表中所有未匹配的内部元组
 				 */
 				if (!ExecScanHashTableForUnmatched(node, econtext))
 				{
 					/* no more unmatched tuples */
-					node->hj_JoinState = HJ_NEED_NEW_BATCH;
+					// 没有更多的未匹配内部元组
+					node->hj_JoinState = HJ_NEED_NEW_BATCH;  // 设置节点状态为“需要新的批次”
 					continue;
 				}
 
 				/*
 				 * Generate a fake join tuple with nulls for the outer tuple,
 				 * and return it if it passes the non-join quals.
+				 * 生成一个假的连接元组，外部元组部分为NULL，
+			     * 如果这个元组通过了非连接条件的测试，则返回它
 				 */
+				// 将执行上下文中的外部元组槽设置为预定义的空元组槽
 				econtext->ecxt_outertuple = node->hj_NullOuterTupleSlot;
 
+				// 如果没有其他非连接条件或者其他条件测试通过
 				if (otherqual == NULL || ExecQual(otherqual, econtext))
-					return ExecProject(node->js.ps.ps_ProjInfo);
+					return ExecProject(node->js.ps.ps_ProjInfo);  // 执行投影操作，生成最终的结果元组
 				else
-					InstrCountFiltered2(node, 1);
-				break;
+					InstrCountFiltered2(node, 1);  // 如果条件测试未通过，增加过滤统计计数
+				break;  // 结束当前case处理
 
 			case HJ_NEED_NEW_BATCH:
 
@@ -613,6 +662,7 @@ ExecParallelHashJoin(PlanState *pstate)
  *		Init routine for HashJoin node.
  * ----------------------------------------------------------------
  */
+// 定义一个初始化哈希连接节点的函数，该函数返回一个指向哈希连接状态结构的指针
 HashJoinState *
 ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 {
@@ -683,20 +733,25 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 								node->join.jointype == JOIN_SEMI);
 
 	/* set up null tuples for outer joins, if needed */
+	// 根据连接类型初始化空元组槽
 	switch (node->join.jointype)
 	{
+		// 对于内连接、半连接等，不需要空元组槽
 		case JOIN_INNER:
 		case JOIN_SEMI:
 			break;
+		// 对于左连接、反连接等，初始化内部空元组槽
 		case JOIN_LEFT:
 		case JOIN_ANTI:
 			hjstate->hj_NullInnerTupleSlot =
 				ExecInitNullTupleSlot(estate, innerDesc, &TTSOpsVirtual);
 			break;
+		// 对于右连接，初始化外部空元组槽
 		case JOIN_RIGHT:
 			hjstate->hj_NullOuterTupleSlot =
 				ExecInitNullTupleSlot(estate, outerDesc, &TTSOpsVirtual);
 			break;
+		// 对于全连接，初始化内外部空元组槽
 		case JOIN_FULL:
 			hjstate->hj_NullOuterTupleSlot =
 				ExecInitNullTupleSlot(estate, outerDesc, &TTSOpsVirtual);
@@ -715,6 +770,7 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	 * the hash join node uses ExecScanHashBucket() to get at the contents of
 	 * the hash table.  -cim 6/9/91
 	 */
+	// 将哈希节点的结果元组槽指针赋值给哈希连接的哈希元组槽，用于存储哈希表的元组
 	{
 		HashState  *hashstate = (HashState *) innerPlanState(hjstate);
 		TupleTableSlot *slot = hashstate->ps.ps_ResultTupleSlot;
