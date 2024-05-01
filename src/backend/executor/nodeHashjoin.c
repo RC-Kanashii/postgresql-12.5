@@ -525,8 +525,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					if (node->js.single_match)
 						node->hj_JoinState = HJ_NEED_NEW_OUTER;
 
-					if (otherqual == NULL || ExecQual(otherqual, econtext))
-						return ExecProject(node->js.ps.ps_ProjInfo);  //执行投影操作
+					if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+						TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
+						return result;  //执行投影操作
+					}
 					else
 						InstrCountFiltered2(node, 1);  //其他条件不匹配
 				}
@@ -559,8 +561,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
 
 					// 如果没有其他非连接条件或者其他条件测试通过
-					if (otherqual == NULL || ExecQual(otherqual, econtext))
-						return ExecProject(node->js.ps.ps_ProjInfo);  // 执行投影操作，生成最终的结果元组
+					if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+						TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
+						return result;  // 执行投影操作，生成最终的结果元组
+					}
 					else
 						InstrCountFiltered2(node, 1);  // 如果条件测试未通过，增加过滤统计计数
 				}
@@ -593,8 +597,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				econtext->ecxt_outertuple = node->hj_NullOuterTupleSlot;
 
 				// 如果没有其他非连接条件或者其他条件测试通过
-				if (otherqual == NULL || ExecQual(otherqual, econtext))
-					return ExecProject(node->js.ps.ps_ProjInfo);  // 执行投影操作，生成最终的结果元组
+				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+					TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
+					return result;  // 执行投影操作，生成最终的结果元组
+				}
 				else
 					InstrCountFiltered2(node, 1);  // 如果条件测试未通过，增加过滤统计计数
 				break;  // 结束当前case处理
