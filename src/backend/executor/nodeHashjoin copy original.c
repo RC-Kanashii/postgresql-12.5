@@ -488,7 +488,42 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				{
 					node->hj_MatchedOuter = true;  // 标记已找到与外部元组匹配的内部元组
 
-					econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
+					if (parallel)
+					{
+						/*
+						 * Full/right outer joins are currently not supported
+						 * for parallel joins, so we don't need to set the
+						 * match bit.  Experiments show that it's worth
+						 * avoiding the shared memory traffic on large
+						 * systems.
+						 */
+						Assert(!HJ_FILL_INNER(node));
+					}
+					else
+					{
+						/*
+						 * This is really only needed if HJ_FILL_INNER(node),
+						 * but we'll avoid the branch and just set it always.
+						 */
+						HeapTupleHeaderSetMatch(HJTUPLE_MINTUPLE(node->hj_CurTuple));
+					}
+
+					/* In an antijoin, we never return a matched tuple */
+					if (node->js.jointype == JOIN_ANTI)
+					{
+						node->hj_JoinState = HJ_NEED_NEW_OUTER;
+						continue;
+					}
+
+					/*
+					 * If we only need to join to the first matching inner
+					 * tuple, then consider returning this one, but after that
+					 * continue with next outer tuple.
+					 * 如果只需要连接到第一个匹配的内表元组，那么可以考虑返回这个元组，
+                     * 但是在此之后可以继续使用下一个外表元组。
+					 */
+					if (node->js.single_match)
+						node->hj_JoinState = HJ_NEED_NEW_OUTER;
 
 					if (otherqual == NULL || ExecQual(otherqual, econtext)) {
 						TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
@@ -703,10 +738,36 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	hjstate->js.single_match = (node->join.inner_unique ||
 								node->join.jointype == JOIN_SEMI);
 
-	// 固定使用 JOIN_LEFT
-	node->join.jointype = JOIN_LEFT;
-	hjstate->hj_NullInnerTupleSlot =
+	/* set up null tuples for outer joins, if needed */
+	// 根据连接类型初始化空元组槽
+	switch (node->join.jointype)
+	{
+		// 对于内连接、半连接等，不需要空元组槽
+		case JOIN_INNER:
+		case JOIN_SEMI:
+			break;
+		// 对于左连接、反连接等，初始化内部空元组槽
+		case JOIN_LEFT:
+		case JOIN_ANTI:
+			hjstate->hj_NullInnerTupleSlot =
 				ExecInitNullTupleSlot(estate, innerDesc, &TTSOpsVirtual);
+			break;
+		// 对于右连接，初始化外部空元组槽
+		case JOIN_RIGHT:
+			hjstate->hj_NullOuterTupleSlot =
+				ExecInitNullTupleSlot(estate, outerDesc, &TTSOpsVirtual);
+			break;
+		// 对于全连接，初始化内外部空元组槽
+		case JOIN_FULL:
+			hjstate->hj_NullOuterTupleSlot =
+				ExecInitNullTupleSlot(estate, outerDesc, &TTSOpsVirtual);
+			hjstate->hj_NullInnerTupleSlot =
+				ExecInitNullTupleSlot(estate, innerDesc, &TTSOpsVirtual);
+			break;
+		default:
+			elog(ERROR, "unrecognized join type: %d",
+				 (int) node->join.jointype);
+	}
 
 	/*
 	 * now for some voodoo.  our temporary tuple slot is actually the result
