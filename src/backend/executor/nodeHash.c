@@ -496,7 +496,9 @@ ExecHashTableCreate(HashState *state, List *hashOperators, List *hashCollations,
 	hashtable->curbatch = 0;
 	hashtable->nbatch_original = nbatch;
 	hashtable->nbatch_outstart = nbatch;
-	hashtable->growEnabled = true;
+	// hashtable->growEnabled = true;
+	// 关闭多batch模式
+	hashtable->growEnabled = false;
 	hashtable->totalTuples = 0;
 	hashtable->partialTuples = 0;
 	hashtable->skewTuples = 0;
