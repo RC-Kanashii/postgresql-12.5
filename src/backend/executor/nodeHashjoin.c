@@ -741,7 +741,8 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 								node->join.jointype == JOIN_SEMI);
 
 	// 固定使用 JOIN_LEFT
-	node->join.jointype = JOIN_LEFT;
+	// 对于实验2.1，不要固定使用 JOIN_LEFT
+	// node->join.jointype = JOIN_LEFT;
 
 	// 根据连接类型初始化空元组槽
 	switch (node->join.jointype)

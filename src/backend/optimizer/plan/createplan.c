@@ -231,6 +231,10 @@ static Hash *make_hash(Plan *lefttree,
 					   Oid skewTable,
 					   AttrNumber skewColumn,
 					   bool skewInherit);
+
+// 不使用 skew table 的 make_hash
+static Hash *make_hash_without_skew(Plan *lefttree);
+
 static MergeJoin *make_mergejoin(List *tlist,
 								 List *joinclauses, List *otherclauses,
 								 List *mergeclauses,
@@ -4380,7 +4384,7 @@ create_hashjoin_plan(PlannerInfo *root,
 					 HashPath *best_path)
 {
 	HashJoin   *join_plan;
-	Hash	   *hash_plan;
+	// Hash	   *hash_plan;
 	Plan	   *outer_plan;
 	Plan	   *inner_plan;
 	List	   *tlist = build_path_tlist(root, &best_path->jpath.path);
@@ -4395,6 +4399,9 @@ create_hashjoin_plan(PlannerInfo *root,
 	AttrNumber	skewColumn = InvalidAttrNumber;
 	bool		skewInherit = false;
 	ListCell   *lc;
+	// 新增内部哈希计划和外部哈希计划，用于建立哈希表
+	Hash	   *inner_hash_plan;
+	Hash	   *outer_hash_plan;
 
 	/*
 	 * HashJoin can project, so we don't have to demand exact tlists from the
@@ -4507,29 +4514,39 @@ create_hashjoin_plan(PlannerInfo *root,
 	/*
 	 * Build the hash node and hash join node.
 	 */
-	hash_plan = make_hash(inner_plan,
-						  inner_hashkeys,
-						  skewTable,
-						  skewColumn,
-						  skewInherit);
+	// hash_plan = make_hash(inner_plan,
+	// 					  inner_hashkeys,
+	// 					  skewTable,
+	// 					  skewColumn,
+	// 					  skewInherit);
+	// 创建内表和外表各自的哈希表
+	inner_hash_plan = make_hash_without_skew(inner_plan);
+	outer_hash_plan = make_hash_without_skew(outer_plan);
 
 	/*
 	 * Set Hash node's startup & total costs equal to total cost of input
 	 * plan; this only affects EXPLAIN display not decisions.
 	 */
-	copy_plan_costsize(&hash_plan->plan, inner_plan);
-	hash_plan->plan.startup_cost = hash_plan->plan.total_cost;
+	// copy_plan_costsize(&hash_plan->plan, inner_plan);
+	// hash_plan->plan.startup_cost = hash_plan->plan.total_cost;
+	copy_plan_costsize(&inner_hash_plan->plan, inner_plan);
+	copy_plan_costsize(&outer_hash_plan->plan, outer_plan);
+
+	// 成本估计可以设置成任意值
+	inner_hash_plan->plan.startup_cost = inner_hash_plan->plan.total_cost;
+	outer_hash_plan->plan.startup_cost = outer_hash_plan->plan.total_cost;
 
 	/*
 	 * If parallel-aware, the executor will also need an estimate of the total
 	 * number of rows expected from all participants so that it can size the
 	 * shared hash table.
 	 */
-	if (best_path->jpath.path.parallel_aware)
-	{
-		hash_plan->plan.parallel_aware = true;
-		hash_plan->rows_total = best_path->inner_rows_total;
-	}
+	// 不用考虑并行
+	// if (best_path->jpath.path.parallel_aware)
+	// {
+	// 	hash_plan->plan.parallel_aware = true;
+	// 	hash_plan->rows_total = best_path->inner_rows_total;
+	// }
 
 	join_plan = make_hashjoin(tlist,
 							  joinclauses,
@@ -4538,8 +4555,8 @@ create_hashjoin_plan(PlannerInfo *root,
 							  hashoperators,
 							  hashcollations,
 							  outer_hashkeys,
-							  outer_plan,
-							  (Plan *) hash_plan,
+							  (Plan *) outer_hash_plan,
+							  (Plan *) inner_hash_plan,
 							  best_path->jpath.jointype,
 							  best_path->jpath.inner_unique);
 
@@ -5624,6 +5641,21 @@ make_hash(Plan *lefttree,
 	node->skewTable = skewTable;
 	node->skewColumn = skewColumn;
 	node->skewInherit = skewInherit;
+
+	return node;
+}
+
+// 没有 skew table 的 make_hash
+static Hash *
+make_hash_without_skew(Plan *lefttree)
+{
+	Hash	   *node = makeNode(Hash);
+	Plan	   *plan = &node->plan;
+
+	plan->targetlist = lefttree->targetlist;
+	plan->qual = NIL;
+	plan->lefttree = lefttree;
+	plan->righttree = NULL;
 
 	return node;
 }
