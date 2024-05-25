@@ -5,7 +5,8 @@
     "executor.h": "c",
     "hashjoin.h": "c",
     "nodehash.h": "c",
-    "nodehashjoin.h": "c"
+    "nodehashjoin.h": "c",
+    "execnodes.h": "c"
   },
   "C_Cpp_Runner.cCompilerPath": "gcc",
   "C_Cpp_Runner.cppCompilerPath": "/usr/bin/clang++",

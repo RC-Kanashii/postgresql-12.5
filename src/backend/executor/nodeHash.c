@@ -88,12 +88,62 @@ static void ExecParallelHashCloseBatchAccessors(HashJoinTable hashtable);
  *		stub for pro forma compliance
  * ----------------------------------------------------------------
  */
+// 仿照 MultiExecHash 来实现 ExecHash
+// 需要在该函数中创建哈希表
+// 注意 HashState 是 PlanState 的子类
+// 如果有结果则返回结果元组，否则返回 NULL
 static TupleTableSlot *
-ExecHash(PlanState *pstate)
+ExecHash(HashState *hashNode)
 {
-	elog(ERROR, "Hash node does not support ExecProcNode call convention");
+	PlanState  *outerNode;
+	List	   *hashkeys;
+	HashJoinTable hashtable;
+	TupleTableSlot *slot;
+	ExprContext *econtext;
+	uint32		hashvalue;
+
+	// 核心代码要写在 InstrStartNode 和 InstrStopNode 之间
+	/* must provide our own instrumentation support */
+	if (hashNode->ps.instrument)
+		InstrStartNode(hashNode->ps.instrument);
+	
+	// 获取 HashState 的外部节点（即左子树）
+	// 由于 Hash 节点只有一个子节点，即 SeqScan 子节点，因此 Hash 节点只有左子树，无需考虑右子树
+	outerNode = outerPlanState(hashNode);
+	hashtable = hashNode->hashtable;
+
+	hashkeys = hashNode->hashkeys; //Expression contextt
+    econtext = hashNode->ps.ps_ExprContext;
+
+	// 执行 SeqScan 节点，获取元组
+	slot = ExecProcNode(outerNode); //Get all tuples, insert into table
+
+	if (TupIsNull(slot)) {
+		return NULL;
+	}
+
+	hashtable->totalTuples += 1; //Compute hash val
+
+	// ExecHashGetHashValue 要求待计算哈希值的元组必须在 econtext->ecxt_innertuple
+    // econtext->ecxt_innertuple = slot;
+    econtext->ecxt_outertuple = slot;
+    ExecHashGetHashValue(hashtable, econtext, hashkeys, true, false, &hashvalue);
+    ExecHashTableInsert(hashtable, slot, hashvalue);
+
+	/* must provide our own instrumentation support */
+	if (hashNode->ps.instrument)
+		InstrStopNode(hashNode->ps.instrument, hashNode->hashtable->partialTuples);
+	
 	return NULL;
 }
+
+// 原 ExecHash
+// static TupleTableSlot *
+// ExecHash(PlanState *pstate)
+// {
+// 	elog(ERROR, "Hash node does not support ExecProcNode call convention");
+// 	return NULL;
+// }
 
 /* ----------------------------------------------------------------
  *		MultiExecHash
