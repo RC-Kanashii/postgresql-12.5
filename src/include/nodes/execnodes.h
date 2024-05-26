@@ -1939,26 +1939,65 @@ typedef struct MergeJoinState
 typedef struct HashJoinTupleData *HashJoinTuple;
 typedef struct HashJoinTableData *HashJoinTable;
 
+// 修改 HashJoinState 结构以支持对称哈希连接算法
 typedef struct HashJoinState
 {
 	JoinState	js;				/* its first field is NodeTag */
 	ExprState  *hashclauses;
+
 	List	   *hj_OuterHashKeys;	/* list of ExprState nodes */
+	List	   *hj_InnerHashKeys;   // 内表的哈希键
+
 	List	   *hj_HashOperators;	/* list of operator OIDs */
 	List	   *hj_Collations;
+	
 	HashJoinTable hj_HashTable;
+	HashJoinTable hj_HashTable_inner; // 内表的哈希表
+
 	uint32		hj_CurHashValue;
+	uint32		hj_CurHashValue_inner;	// 内表的当前哈希值
+
 	int			hj_CurBucketNo;
+	int			hj_CurBucketNo_inner;	// 内表的当前哈希桶值
+
+	// 无需创建内表的skew table
 	int			hj_CurSkewBucketNo;
+
 	HashJoinTuple hj_CurTuple;
+	HashJoinTuple hj_CurTuple_inner;	// 内表的当前元组
+
 	TupleTableSlot *hj_OuterTupleSlot;
+	TupleTableSlot *hj_InnerTupleSlot;	// 内表的元组槽
+
 	TupleTableSlot *hj_HashTupleSlot;
+	TupleTableSlot *hj_HashTupleSlot_inner;	// 内表的哈希元组槽
+
 	TupleTableSlot *hj_NullOuterTupleSlot;
 	TupleTableSlot *hj_NullInnerTupleSlot;
+
 	TupleTableSlot *hj_FirstOuterTupleSlot;
+	TupleTableSlot *hj_FirstInnerTupleSlot; // 内表的首位元组槽
+
+
+
 	int			hj_JoinState;
 	bool		hj_MatchedOuter;
 	bool		hj_OuterNotEmpty;
+
+
+	bool        hj_InnerEnd; // 内表是否读取完
+    bool        hj_OuterEnd; // 外表是否读取完
+
+	bool        hj_NeedNewInnerTuple; // 是否需要新的内表元组
+    bool        hj_NeedNewOuterTuple; // 是否需要新的外表元组
+
+	bool        hj_InnerNotEmpty; // 内表是否不为空
+    bool        hj_OuterNotEmpty; // 外表是否不为空
+
+	bool        hj_FetchingFromInner; //CSI3130 true if we fetched tuple from inner relation
+
+	int         hj_foundByProbingInner; //CSI3130 number of tuples found by probing inner relation
+    int         hj_foundByProbingOuter; //CSI3130 number of tuples found by probing outer relation
 } HashJoinState;
 
 
