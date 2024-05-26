@@ -1915,17 +1915,17 @@ typedef struct MergeJoinState
  *		hashclauses				original form of the hashjoin condition
  *		hj_OuterHashKeys		the outer hash keys in the hashjoin condition
  *		hj_HashOperators		the join operators in the hashjoin condition
- *		hj_HashTable			hash table for the hashjoin
+ *		hj_OuterHashTable			hash table for the hashjoin
  *								(NULL if table not built yet)
- *		hj_CurHashValue			hash value for current outer tuple
- *		hj_CurBucketNo			regular bucket# for current outer tuple
+ *		hj_OuterCurHashValue			hash value for current outer tuple
+ *		hj_OuterCurBucketNo			regular bucket# for current outer tuple
  *		hj_CurSkewBucketNo		skew bucket# for current outer tuple
- *		hj_CurTuple				last inner tuple matched to current outer
+ *		hj_OuterCurTuple				last inner tuple matched to current outer
  *								tuple, or NULL if starting search
  *								(hj_CurXXX variables are undefined if
  *								OuterTupleSlot is empty!)
  *		hj_OuterTupleSlot		tuple slot for outer tuples
- *		hj_HashTupleSlot		tuple slot for inner (hashed) tuples
+ *		hj_OuterHashTupleSlot		tuple slot for inner (hashed) tuples
  *		hj_NullOuterTupleSlot	prepared null tuple for right/full outer joins
  *		hj_NullInnerTupleSlot	prepared null tuple for left/full outer joins
  *		hj_FirstOuterTupleSlot	first tuple retrieved from outer plan
@@ -1951,26 +1951,26 @@ typedef struct HashJoinState
 	List	   *hj_HashOperators;	/* list of operator OIDs */
 	List	   *hj_Collations;
 	
-	HashJoinTable hj_HashTable;
-	HashJoinTable hj_HashTable_inner; // 内表的哈希表
+	HashJoinTable hj_OuterHashTable;
+	HashJoinTable hj_InnerHashTable; // 内表的哈希表
 
-	uint32		hj_CurHashValue;
-	uint32		hj_CurHashValue_inner;	// 内表的当前哈希值
+	uint32		hj_OuterCurHashValue;
+	uint32		hj_InnerCurHashValue;	// 内表的当前哈希值
 
-	int			hj_CurBucketNo;
-	int			hj_CurBucketNo_inner;	// 内表的当前哈希桶值
+	int			hj_OuterCurBucketNo;
+	int			hj_InnerCurBucketNo;	// 内表的当前哈希桶值
 
 	// 无需创建内表的skew table
 	int			hj_CurSkewBucketNo;
 
-	HashJoinTuple hj_CurTuple;
-	HashJoinTuple hj_CurTuple_inner;	// 内表的当前元组
+	HashJoinTuple hj_OuterCurTuple;
+	HashJoinTuple hj_InnerCurTuple;	// 内表的当前元组
 
 	TupleTableSlot *hj_OuterTupleSlot;
 	TupleTableSlot *hj_InnerTupleSlot;	// 内表的元组槽
 
-	TupleTableSlot *hj_HashTupleSlot;
-	TupleTableSlot *hj_HashTupleSlot_inner;	// 内表的哈希元组槽
+	TupleTableSlot *hj_OuterHashTupleSlot;
+	TupleTableSlot *hj_InnerHashTupleSlot;	// 内表的哈希元组槽
 
 	TupleTableSlot *hj_NullOuterTupleSlot;
 	TupleTableSlot *hj_NullInnerTupleSlot;
