@@ -1919,7 +1919,7 @@ typedef struct MergeJoinState
  *								(NULL if table not built yet)
  *		hj_OuterCurHashValue			hash value for current outer tuple
  *		hj_OuterCurBucketNo			regular bucket# for current outer tuple
- *		hj_CurSkewBucketNo		skew bucket# for current outer tuple
+ *		hj_OuterCurSkewBucketNo		skew bucket# for current outer tuple
  *		hj_OuterCurTuple				last inner tuple matched to current outer
  *								tuple, or NULL if starting search
  *								(hj_CurXXX variables are undefined if
@@ -1960,8 +1960,9 @@ typedef struct HashJoinState
 	int			hj_OuterCurBucketNo;
 	int			hj_InnerCurBucketNo;	// 内表的当前哈希桶值
 
-	// 无需创建内表的skew table
-	int			hj_CurSkewBucketNo;
+	// 内外表的skew table
+	int			hj_OuterCurSkewBucketNo;
+	int			hj_InnerCurSkewBucketNo;
 
 	HashJoinTuple hj_OuterCurTuple;
 	HashJoinTuple hj_InnerCurTuple;	// 内表的当前元组
@@ -1982,8 +1983,6 @@ typedef struct HashJoinState
 
 	int			hj_JoinState;
 	bool		hj_MatchedOuter;
-	bool		hj_OuterNotEmpty;
-
 
 	bool        hj_InnerEnd; // 内表是否读取完
     bool        hj_OuterEnd; // 外表是否读取完
@@ -1996,8 +1995,8 @@ typedef struct HashJoinState
 
 	bool        hj_FetchingFromInner; //CSI3130 true if we fetched tuple from inner relation
 
-	int         hj_foundByProbingInner; //CSI3130 number of tuples found by probing inner relation
-    int         hj_foundByProbingOuter; //CSI3130 number of tuples found by probing outer relation
+	int         hj_FoundByProbingInner; //CSI3130 number of tuples found by probing inner relation
+    int         hj_FoundByProbingOuter; //CSI3130 number of tuples found by probing outer relation
 } HashJoinState;
 
 

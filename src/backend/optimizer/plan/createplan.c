@@ -233,7 +233,7 @@ static Hash *make_hash(Plan *lefttree,
 					   bool skewInherit);
 
 // 不使用 skew table 的 make_hash
-static Hash *make_hash_without_skew(Plan *lefttree);
+static Hash *make_hash_without_skew(Plan *lefttree, List *hashkeys);
 
 static MergeJoin *make_mergejoin(List *tlist,
 								 List *joinclauses, List *otherclauses,
@@ -4393,8 +4393,11 @@ create_hashjoin_plan(PlannerInfo *root,
 	List	   *hashclauses;
 	List	   *hashoperators = NIL;
 	List	   *hashcollations = NIL;
+
+	// 内外表的哈希键
 	List	   *inner_hashkeys = NIL;
 	List	   *outer_hashkeys = NIL;
+
 	Oid			skewTable = InvalidOid;
 	AttrNumber	skewColumn = InvalidAttrNumber;
 	bool		skewInherit = false;
@@ -4514,14 +4517,19 @@ create_hashjoin_plan(PlannerInfo *root,
 	/*
 	 * Build the hash node and hash join node.
 	 */
-	// hash_plan = make_hash(inner_plan,
-	// 					  inner_hashkeys,
-	// 					  skewTable,
-	// 					  skewColumn,
-	// 					  skewInherit);
-	// 创建内表和外表各自的哈希表
-	inner_hash_plan = make_hash_without_skew(inner_plan);
-	outer_hash_plan = make_hash_without_skew(outer_plan);
+	// 创建内表和外表各自的哈希表，不使用 skew table
+	inner_hash_plan = make_hash(inner_plan,
+						  inner_hashkeys,
+						  InvalidOid,
+						  InvalidAttrNumber,
+						  false);
+	outer_hash_plan = make_hash(outer_plan,
+						  outer_hashkeys,
+						  InvalidOid,
+						  InvalidAttrNumber,
+						  false);
+	// inner_hash_plan = make_hash_without_skew(inner_plan, inner_hashkeys);
+	// outer_hash_plan = make_hash_without_skew(outer_plan, outer_hashkeys);
 
 	/*
 	 * Set Hash node's startup & total costs equal to total cost of input
@@ -4532,7 +4540,7 @@ create_hashjoin_plan(PlannerInfo *root,
 	copy_plan_costsize(&inner_hash_plan->plan, inner_plan);
 	copy_plan_costsize(&outer_hash_plan->plan, outer_plan);
 
-	// 成本估计可以设置成任意值
+	// todo: 成本估计可以设置成任意值
 	inner_hash_plan->plan.startup_cost = inner_hash_plan->plan.total_cost;
 	outer_hash_plan->plan.startup_cost = outer_hash_plan->plan.total_cost;
 
@@ -5647,7 +5655,7 @@ make_hash(Plan *lefttree,
 
 // 没有 skew table 的 make_hash
 static Hash *
-make_hash_without_skew(Plan *lefttree)
+make_hash_without_skew(Plan *lefttree, List *hashkeys)
 {
 	Hash	   *node = makeNode(Hash);
 	Plan	   *plan = &node->plan;
@@ -5656,6 +5664,8 @@ make_hash_without_skew(Plan *lefttree)
 	plan->qual = NIL;
 	plan->lefttree = lefttree;
 	plan->righttree = NULL;
+
+	node->hashkeys = hashkeys;
 
 	return node;
 }
