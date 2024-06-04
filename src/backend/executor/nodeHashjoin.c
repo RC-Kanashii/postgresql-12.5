@@ -256,65 +256,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 		{
 			case HJ_BUILD_HASHTABLE:
 
-				/*
-				 * First time through: build hash table for inner relation.
-				 */
-				// Assert(hashtable == NULL);  // 确保这是首次构建哈希表，哈希表变量应为NULL
-
-				/*
-				 * If the outer relation is completely empty, and it's not
-				 * right/full join, we can quit without building the hash
-				 * table.  However, for an inner join it is only a win to
-				 * check this when the outer relation's startup cost is less
-				 * than the projected cost of building the hash table.
-				 * Otherwise it's best to build the hash table first and see
-				 * if the inner relation is empty.  (When it's a left join, we
-				 * should always make this check, since we aren't going to be
-				 * able to skip the join on the strength of an empty inner
-				 * relation anyway.)
-				 *
-				 * If we are rescanning the join, we make use of information
-				 * gained on the previous scan: don't bother to try the
-				 * prefetch if the previous scan found the outer relation
-				 * nonempty. This is not 100% reliable since with new
-				 * parameters the outer relation might yield different
-				 * results, but it's a good heuristic.
-				 *
-				 * The only way to make the check is to try to fetch a tuple
-				 * from the outer plan node.  If we succeed, we have to stash
-				 * it away for later consumption by ExecHashJoinOuterGetTuple.
-				 */
-				// 现在只考虑
-				// if (HJ_FILL_INNER(node))
-				// {
-				// 	/* no chance to not build the hash table */
-				// 	// 如果是右连接，总是需要构建哈希表，因此不尝试早期退出
-				// 	node->hj_FirstOuterTupleSlot = NULL;
-				// }
-				// else if (HJ_FILL_OUTER(node) ||
-				// 		 (outerNode->plan->startup_cost < hashNode->ps.plan->total_cost &&
-				// 		  !node->hj_OuterNotEmpty))
-				// {
-				// 	// 尝试从外部节点获取一个元组
-				// 	node->hj_FirstOuterTupleSlot = ExecProcNode(outerNode);
-				// 	if (TupIsNull(node->hj_FirstOuterTupleSlot))
-				// 	{
-				// 		// 如果外部节点为空，标记外部非空为假
-				// 		node->hj_OuterNotEmpty = false;
-				// 		return NULL;
-				// 	}
-				// 	else
-				// 		node->hj_OuterNotEmpty = true;
-				// }
-				// else
-				// 	// 不尝试获取外部元组
-				// 	node->hj_FirstOuterTupleSlot = NULL;
-
-				/*
-				 * Create the hash table.  If using Parallel Hash, then
-				 * whoever gets here first will create the hash table and any
-				 * later arrivals will merely attach to it.
-				 */
 				// 创建哈希表，根据是否需要处理空值和连接类型来决定
 				// 构建外表的哈希表
 				if (outerHashtable == NULL) {
@@ -339,26 +280,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				// 由于对称哈希一次只哈希一条元组，因此不能使用 MultiExecProcNode 生成全部的哈希表
 				// (void) MultiExecProcNode((PlanState *) hashNode);
 
-				
-
-				/*
-				 * If the inner relation is completely empty, and we're not
-				 * doing a left outer join, we can quit without scanning the
-				 * outer relation.
-				 */
-				// if (hashtable->totalTuples == 0 && !HJ_FILL_OUTER(node))
-				// 	return NULL;
-
-				/*
-				 * need to remember whether nbatch has increased since we
-				 * began scanning the outer relation
-				 */
-				// 记录当前批次，以便之后检查是否增加
-				// 不用考虑批次
-				// hashtable->nbatch_outstart = hashtable->nbatch;
-
-				// node->hj_JoinState = HJ_NEED_NEW_OUTER;  // 设置下一个状态，准备处理外部元组
-				// 新状态：使用另一个哈希函数 f 计算哈希值，并且在另一张表进行探测
+				// 使用另一个哈希函数 f 计算哈希值，并且在另一张表进行探测
 				node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 
 				/* FALL THRU */
@@ -448,109 +370,14 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 
 				// FALL THROUGH
 
-			case HJ_NEED_NEW_OUTER:
-
-				// /*
-				//  * We don't have an outer tuple, try to get the next one
-				//  */
-				// // 如果没有外部元组，尝试获取下一个
-				// outerTupleSlot =
-				// 	ExecHashJoinOuterGetTuple(outerNode, node, &hashvalue);
-				// // 如果外部元组为空，表示批处理结束或可能整个连接结束
-				// if (TupIsNull(outerTupleSlot))
-				// {
-				// 	/* end of batch, or maybe whole join */
-				// 	if (HJ_FILL_INNER(node))
-				// 	{
-				// 		/* set up to scan for unmatched inner tuples */
-				// 		// 准备扫描未匹配的内部元组
-				// 		ExecPrepHashTableForUnmatched(node);
-				// 		// 切换到扫描未匹配内部元组的状态
-				// 		node->hj_JoinState = HJ_FILL_INNER_TUPLES;
-				// 	}
-				// 	else
-				// 		// 切换到需要获取新批次的状态
-				// 		node->hj_JoinState = HJ_NEED_NEW_BATCH;
-				// 	continue;
-				// }
-
-				// // 设置外部元组到执行上下文中
-				// econtext->ecxt_outertuple = outerTupleSlot;
-				// // 标记当前外部元组还未匹配
-				// node->hj_MatchedOuter = false;
-
-				// /*
-				//  * Find the corresponding bucket for this tuple in the main
-				//  * hash table or skew hash table.
-				//  */
-				// // 找到当前元组对应的主哈希表或倾斜哈希表中的桶
-				// node->hj_OuterCurHashValue = hashvalue;
-				// // 获取当前元组所属的桶编号和批次编号
-				// ExecHashGetBucketAndBatch(hashtable, hashvalue,
-				// 						  &node->hj_OuterCurBucketNo, &batchno);
-				// // 获取当前元组所属的倾斜桶编号（如果有）
-				// node->hj_OuterCurSkewBucketNo = ExecHashGetSkewBucket(hashtable,
-				// 												 hashvalue);
-				// node->hj_OuterCurTuple = NULL;
-
-				// /*
-				//  * The tuple might not belong to the current batch (where
-				//  * "current batch" includes the skew buckets if any).
-				//  */
-				// // 如果当前元组所属的批次编号不是当前批次，并且不属于任何倾斜桶
-				// if (batchno != hashtable->curbatch &&
-				// 	node->hj_OuterCurSkewBucketNo == INVALID_SKEW_BUCKET_NO)
-				// {
-				// 	bool		shouldFree;
-				// 	// 提取外部元组的最小元组形式
-				// 	MinimalTuple mintuple = ExecFetchSlotMinimalTuple(outerTupleSlot,
-				// 													  &shouldFree);
-
-				// 	/*
-				// 	 * Need to postpone this outer tuple to a later batch.
-				// 	 * Save it in the corresponding outer-batch file.
-				// 	 */
-				// 	/*
-                //      * 需要将这个外部元组推迟到后续批次。
-                //      * 将其保存到对应的外部批次文件中。
-                //      */
-				// 	// Assert(parallel_state == NULL);
-				// 	Assert(batchno > hashtable->curbatch);
-				// 	// 提取外部元组的最小元组形式	
-				// 	ExecHashJoinSaveTuple(mintuple, hashvalue,
-				// 						  &hashtable->outerBatchFile[batchno]);
-
-				// 	if (shouldFree)
-				// 		heap_free_minimal_tuple(mintuple);
-
-				// 	/* Loop around, staying in HJ_NEED_NEW_OUTER state */
-				// 	// 继续循环，仍然保持在 HJ_NEED_NEW_OUTER 状态
-				// 	continue;
-				// }
-
-				// /* OK, let's scan the bucket for matches */
-				// /* 如果当前元组属于当前批次，切换状态为扫描桶以查找匹配项 */
-				// node->hj_JoinState = HJ_SCAN_BUCKET;
-
-				/* FALL THRU */
-
 			case HJ_SCAN_BUCKET:
 
 				if (node->hj_FetchingFromInner) {
 					// 使用外表的econtext、哈希表和哈希函数
 					hashEcontext = outerHashNode->ps.ps_ExprContext;
 					// 注意要哈希的元组必须放在 econtext->ecxt_outertuple
-					// ecxt_outertuple 要转换成 MinimalTupleSlot
-					hashEcontext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)innerHashNode), &TTSOpsMinimalTuple);
-					// ExecForceStoreMinimalTuple(innerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_outertuple, false);
-					// hashEcontext->ecxt_outertuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(innerTupleSlot), node->hj_InnerHashTupleSlot, false);
-					hashEcontext->ecxt_outertuple = ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(innerTupleSlot), hashEcontext->ecxt_outertuple, false);
-					slot_getallattrs(hashEcontext->ecxt_outertuple);
+					hashEcontext->ecxt_outertuple = innerTupleSlot;
 					hashEcontext->ecxt_innertuple = hashEcontext->ecxt_outertuple;
-					
-					// TTSOpsMinimalTuple 可以通过检查
-					// hashEcontext->ecxt_innertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)innerHashNode), &TTSOpsMinimalTuple);
-					// ExecForceStoreMinimalTuple(innerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_innertuple, false);
 					
 					ExecHashGetHashValue(outerHashtable,
 										 hashEcontext,
@@ -558,8 +385,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 										 false,
 										 false,
 										 &innerHashvalue);
-					// ResetExprContext(econtext);
-					// node->hj_InnerCurTuple = innerTupleSlot;
 					// 内表元组经过外表哈希函数处理后的哈希值
 					node->hj_InnerCurHashValue = innerHashvalue;
 					// 求内表元组在外表哈希表中对应的 bucketNo
@@ -571,17 +396,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					// 使用内表的econtext、哈希表和哈希函数
 					hashEcontext = innerHashNode->ps.ps_ExprContext;
 					// 注意要哈希的元组必须放在 econtext->ecxt_outertuple
-					// ecxt_outertuple 要转换成 MinimalTupleSlot
-					hashEcontext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)outerHashNode), &TTSOpsMinimalTuple);
-					// ExecForceStoreMinimalTuple(outerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_outertuple, false);
-					// hashEcontext->ecxt_outertuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(outerTupleSlot), node->hj_OuterHashTupleSlot, false);
-					hashEcontext->ecxt_outertuple = ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(outerTupleSlot), hashEcontext->ecxt_outertuple, false);
-					slot_getallattrs(hashEcontext->ecxt_outertuple);
+					hashEcontext->ecxt_outertuple = outerTupleSlot;
 					hashEcontext->ecxt_innertuple = hashEcontext->ecxt_outertuple;
-					
-					// TTSOpsMinimalTuple 可以通过检查
-					// hashEcontext->ecxt_innertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)outerHashNode), &TTSOpsMinimalTuple);
-					// ExecForceStoreMinimalTuple(outerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_innertuple, false);
 					
 					ExecHashGetHashValue(innerHashtable,
 										 hashEcontext,
@@ -589,8 +405,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 										 false,
 										 false,
 										 &outerHashvalue);
-					// ResetExprContext(econtext);
-					// node->hj_OuterCurTuple = outerTupleSlot;
 					// 外表元组经过内表哈希函数处理后的哈希值
 					node->hj_OuterCurHashValue = outerHashvalue;
 					// 求外表元组在内表哈希表中对应的 bucketNo
@@ -605,23 +419,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				// 执行哈希桶扫描。如果当前外部元组没有匹配的内部元组，则切换到处理外部连接的填充元组状态
 
 				// 要事先把 hashEcontext->ecxt_outertuple 转移到 econtext->ecxt_outertuple 中
-				// econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
-				if (node->hj_FetchingFromInner) {
-					// econtext->ecxt_outertuple = node->hj_InnerCurTuple;
-					// econtext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)innerHashNode), &TTSOpsMinimalTuple);
-					// ExecForceStoreMinimalTuple(innerTupleSlot->tts_ops->copy_minimal_tuple, econtext->ecxt_outertuple, false);
-					// ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(innerTupleSlot), econtext->ecxt_outertuple, false);
-					// econtext->ecxt_outertuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(innerTupleSlot), node->hj_InnerHashTupleSlot, false);
-					econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
-				} else {
-					// econtext->ecxt_outertuple = node->hj_OuterCurTuple;
-					// econtext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)outerHashNode), &TTSOpsMinimalTuple);
-					// ExecForceStoreMinimalTuple(outerTupleSlot->tts_ops->copy_minimal_tuple, econtext->ecxt_outertuple, false);
-					// ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(outerTupleSlot), econtext->ecxt_outertuple, false);
-					// econtext->ecxt_outertuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(outerTupleSlot), node->hj_OuterHashTupleSlot, false);
-					econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
-				}
-				slot_getallattrs(econtext->ecxt_outertuple);
+				econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
 
 				// 清空 CurTuple
 				node->hj_InnerCurTuple = NULL;
@@ -1179,6 +977,12 @@ ExecGetTuple(HashState *hashNode,
 	if (TupIsNull(slot)) {
 		return NULL;
 	}
+
+	// 把 slot 转换成 MinimalTupleSlot 类型
+	TupleTableSlot *tmp = MakeTupleTableSlot(ExecGetResultType((PlanState *)ssNode), &TTSOpsMinimalTuple);;
+	slot = ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(slot), tmp, false);
+	slot_getallattrs(slot);
+
 	return slot;
 }
 

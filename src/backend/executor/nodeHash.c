@@ -129,24 +129,12 @@ ExecHash(HashState *hashNode)
 		return NULL;
 	}
 
-	// 强制获取元组的属性值
+	// 强制获取元组的属性值，方便调试
 	slot_getallattrs(slot);
 
-	// 如果元组有结果，把元组哈希后插入哈希表
 	/* We have to compute the hash value */
-	// econtext->ecxt_outertuple = slot;
 	econtext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType(outerPlanState(hashNode)), &TTSOpsMinimalTuple);
-	// econtext->ecxt_outertuple = ExecStoreMinimalTuple(slot->tts_ops->copy_minimal_tuple, econtext->ecxt_outertuple, false);
 	econtext->ecxt_outertuple = ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(slot), econtext->ecxt_outertuple, false);
-	// slot_getallattrs(econtext->ecxt_outertuple);
-
-
-	// 检查 ecxt_innertuple 是否为空
-	// if (econtext->ecxt_innertuple == NULL) {
-	// TTSOpsMinimalTuple 可以通过检查
-	// econtext->ecxt_innertuple = MakeTupleTableSlot(ExecGetResultType(outerPlanState(hashNode)), &TTSOpsMinimalTuple);
-	// ExecForceStoreMinimalTuple(slot->tts_ops->copy_minimal_tuple, econtext->ecxt_innertuple, false);
-	// }
 	econtext->ecxt_innertuple = econtext->ecxt_outertuple;
 
 	if (ExecHashGetHashValue(hashtable, econtext, hashkeys,
@@ -177,6 +165,9 @@ ExecHash(HashState *hashNode)
 	if (hashNode->ps.instrument)
 		InstrStopNode(hashNode->ps.instrument, hashNode->hashtable->partialTuples);
 	
+	// 把已经类型转换好的 econtext->ecxt_outertuple 传回 slot
+	// 这样可以使 ExecHashJoinImpl 的代码更加简洁
+	slot = econtext->ecxt_outertuple;
 	return slot;
 }
 
