@@ -214,8 +214,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 	otherqual = node->js.ps.qual;
 
 	// 获取左哈希节点和右哈希节点
-	innerHashNode = (HashState *) innerPlanState(node);
-	outerHashNode = (HashState *) outerPlanState(node);
+	innerHashNode = castNode(HashState, innerPlanState(node));
+	outerHashNode = castNode(HashState, outerPlanState(node));
 
 	// 获取左右节点的哈希表
 	outerHashtable = node->hj_OuterHashTable;
@@ -294,6 +294,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 
 				// 内表耗尽，直接扫描外表
 				if (node->hj_InnerEnd) {
+					node->hj_FetchingFromInner = false;
 					outerTupleSlot = ExecGetTuple(outerHashNode, node);
 					if (TupIsNull(outerTupleSlot)) {
 						// 外表也耗尽了
@@ -309,6 +310,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 
 				// 外表耗尽，直接扫描内表
 				if (node->hj_OuterEnd) {
+					node->hj_FetchingFromInner = true;
 					innerTupleSlot = ExecGetTuple(innerHashNode, node);
 					if (TupIsNull(innerTupleSlot)) {
 						// 内表也耗尽了
@@ -491,6 +493,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						}
 
 						TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
+						// 强制获取元组的值，用于调试
+						slot_getallattrs(result);
 
 						// 匹配成功，记得依然要切换 node->hj_FetchingFromInner
 						node->hj_FetchingFromInner = !node->hj_FetchingFromInner;
@@ -808,6 +812,10 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	hjstate->hj_OuterCurTuple = NULL;
 	hjstate->hj_InnerCurTuple = NULL;
 
+	// 内外表元组槽赋 NULL
+	hjstate->hj_InnerTupleSlot = NULL;
+	hjstate->hj_OuterTupleSlot = NULL;
+
 	hjstate->hj_OuterHashKeys = ExecInitExprList(node->hashkeys,
 												 (PlanState *) hjstate);
 	hjstate->hj_InnerHashKeys = ExecInitExprList(node->hashkeys,
@@ -947,6 +955,7 @@ ExecGetTuple(HashState *hashNode,
 	TupleTableSlot *slot;
 
 	ssNode = hashNode->ps.lefttree;
+	ssNode = outerPlanState(hashNode);
 	hashtable = hashNode->hashtable;
 	hashkeys = hashNode->hashkeys;
 	econtext = hashNode->ps.ps_ExprContext;
