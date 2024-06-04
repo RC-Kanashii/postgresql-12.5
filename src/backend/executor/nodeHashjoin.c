@@ -653,6 +653,16 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					// econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
 
 					if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+						// 注意：由于之前 ExecScanHashBucket 要求待检测元组存放在 ecxt_outertuple
+						// 而查询到的元组存放在 ecxt_innertuple
+						// 当 hj_FetchingFromInner == true 时，这会导致投影后左右表内容颠倒
+						// 因此要交换 ecxt_outertuple 和 ecxt_innertuple
+						if (node->hj_FetchingFromInner) {
+							TupleTableSlot *tmp = econtext->ecxt_innertuple;
+							econtext->ecxt_innertuple = econtext->ecxt_outertuple;
+							econtext->ecxt_outertuple = tmp;
+						}
+
 						TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
 
 						// 匹配成功，记得依然要切换 node->hj_FetchingFromInner
