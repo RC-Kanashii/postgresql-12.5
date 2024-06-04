@@ -235,6 +235,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 	 */
 	ResetExprContext(econtext);
 
+	// hashEcontext 清理
+	ResetExprContext(innerHashNode->ps.ps_ExprContext);
+	ResetExprContext(outerHashNode->ps.ps_ExprContext);
+
 	/*
 	 * run the hash join state machine
 	 */
@@ -375,6 +379,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 						continue;
 					}
+					// 存放在 hj_OuterCurTuple
+					node->hj_OuterCurTuple = outerTupleSlot;
 					node->hj_JoinState = HJ_SCAN_BUCKET;
 					continue;
 				}
@@ -388,6 +394,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 						continue;
 					}
+					// 存放在 hj_InnerCurTuple
+					node->hj_InnerCurTuple = innerTupleSlot;
 					node->hj_JoinState = HJ_SCAN_BUCKET;
 					continue;
 				}
@@ -406,6 +414,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 						continue;
 					}
+					// 存放在 hj_InnerCurTuple
+					// node->hj_InnerCurTuple = innerTupleSlot;
 				} else {
 					// 存放被哈希的外表元组
 					outerTupleSlot = ExecProcNode((PlanState *) outerHashNode);
@@ -417,6 +427,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 						continue;
 					}
+					// 存放在 hj_OuterCurTuple
+					// node->hj_OuterCurTuple = outerTupleSlot;
 				}
 
 				/*
@@ -530,12 +542,16 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					// 注意要哈希的元组必须放在 econtext->ecxt_outertuple
 					// ecxt_outertuple 要转换成 MinimalTupleSlot
 					hashEcontext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)innerHashNode), &TTSOpsMinimalTuple);
-					ExecForceStoreMinimalTuple(innerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_outertuple, false);
-					// if (hashEcontext->ecxt_innertuple == NULL) {
+					// ExecForceStoreMinimalTuple(innerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_outertuple, false);
+					// hashEcontext->ecxt_outertuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(innerTupleSlot), node->hj_InnerHashTupleSlot, false);
+					hashEcontext->ecxt_outertuple = ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(innerTupleSlot), hashEcontext->ecxt_outertuple, false);
+					slot_getallattrs(hashEcontext->ecxt_outertuple);
+					hashEcontext->ecxt_innertuple = hashEcontext->ecxt_outertuple;
+					
 					// TTSOpsMinimalTuple 可以通过检查
-					hashEcontext->ecxt_innertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)innerHashNode), &TTSOpsMinimalTuple);
-					ExecForceStoreMinimalTuple(innerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_innertuple, false);
-					// }
+					// hashEcontext->ecxt_innertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)innerHashNode), &TTSOpsMinimalTuple);
+					// ExecForceStoreMinimalTuple(innerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_innertuple, false);
+					
 					ExecHashGetHashValue(outerHashtable,
 										 hashEcontext,
 										 node->hj_InnerHashKeys,
@@ -557,12 +573,16 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					// 注意要哈希的元组必须放在 econtext->ecxt_outertuple
 					// ecxt_outertuple 要转换成 MinimalTupleSlot
 					hashEcontext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)outerHashNode), &TTSOpsMinimalTuple);
-					ExecForceStoreMinimalTuple(outerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_outertuple, false);
-					// if (hashEcontext->ecxt_innertuple == NULL) {
+					// ExecForceStoreMinimalTuple(outerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_outertuple, false);
+					// hashEcontext->ecxt_outertuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(outerTupleSlot), node->hj_OuterHashTupleSlot, false);
+					hashEcontext->ecxt_outertuple = ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(outerTupleSlot), hashEcontext->ecxt_outertuple, false);
+					slot_getallattrs(hashEcontext->ecxt_outertuple);
+					hashEcontext->ecxt_innertuple = hashEcontext->ecxt_outertuple;
+					
 					// TTSOpsMinimalTuple 可以通过检查
-					hashEcontext->ecxt_innertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)outerHashNode), &TTSOpsMinimalTuple);
-					ExecForceStoreMinimalTuple(outerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_innertuple, false);
-					// }
+					// hashEcontext->ecxt_innertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)outerHashNode), &TTSOpsMinimalTuple);
+					// ExecForceStoreMinimalTuple(outerTupleSlot->tts_ops->copy_minimal_tuple, hashEcontext->ecxt_innertuple, false);
+					
 					ExecHashGetHashValue(innerHashtable,
 										 hashEcontext,
 										 node->hj_OuterHashKeys,
@@ -587,16 +607,25 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				// 要事先把 hashEcontext->ecxt_outertuple 转移到 econtext->ecxt_outertuple 中
 				// econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
 				if (node->hj_FetchingFromInner) {
-					econtext->ecxt_outertuple = innerTupleSlot;
-					econtext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)innerHashNode), &TTSOpsMinimalTuple);
+					// econtext->ecxt_outertuple = node->hj_InnerCurTuple;
+					// econtext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)innerHashNode), &TTSOpsMinimalTuple);
 					// ExecForceStoreMinimalTuple(innerTupleSlot->tts_ops->copy_minimal_tuple, econtext->ecxt_outertuple, false);
-					ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(innerTupleSlot), econtext->ecxt_outertuple, false);
+					// ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(innerTupleSlot), econtext->ecxt_outertuple, false);
+					// econtext->ecxt_outertuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(innerTupleSlot), node->hj_InnerHashTupleSlot, false);
+					econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
 				} else {
-					econtext->ecxt_outertuple = outerTupleSlot;
-					econtext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)outerHashNode), &TTSOpsMinimalTuple);
+					// econtext->ecxt_outertuple = node->hj_OuterCurTuple;
+					// econtext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType((PlanState *)outerHashNode), &TTSOpsMinimalTuple);
 					// ExecForceStoreMinimalTuple(outerTupleSlot->tts_ops->copy_minimal_tuple, econtext->ecxt_outertuple, false);
-					ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(outerTupleSlot), econtext->ecxt_outertuple, false);
+					// ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(outerTupleSlot), econtext->ecxt_outertuple, false);
+					// econtext->ecxt_outertuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(outerTupleSlot), node->hj_OuterHashTupleSlot, false);
+					econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
 				}
+				slot_getallattrs(econtext->ecxt_outertuple);
+
+				// 清空 CurTuple
+				node->hj_InnerCurTuple = NULL;
+				node->hj_OuterCurTuple = NULL;
 
 				// 使用的是另一张表的哈希函数进行探测
 				// 结果在 econtext->ecxt_innertuple 或者 node->hj_OuterCurTuple 中

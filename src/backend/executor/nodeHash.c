@@ -136,14 +136,18 @@ ExecHash(HashState *hashNode)
 	/* We have to compute the hash value */
 	// econtext->ecxt_outertuple = slot;
 	econtext->ecxt_outertuple = MakeTupleTableSlot(ExecGetResultType(outerPlanState(hashNode)), &TTSOpsMinimalTuple);
-	ExecForceStoreMinimalTuple(slot->tts_ops->copy_minimal_tuple, econtext->ecxt_outertuple, false);
+	// econtext->ecxt_outertuple = ExecStoreMinimalTuple(slot->tts_ops->copy_minimal_tuple, econtext->ecxt_outertuple, false);
+	econtext->ecxt_outertuple = ExecStoreMinimalTuple(ExecCopySlotMinimalTuple(slot), econtext->ecxt_outertuple, false);
+	// slot_getallattrs(econtext->ecxt_outertuple);
+
 
 	// 检查 ecxt_innertuple 是否为空
 	// if (econtext->ecxt_innertuple == NULL) {
 	// TTSOpsMinimalTuple 可以通过检查
-	econtext->ecxt_innertuple = MakeTupleTableSlot(ExecGetResultType(outerPlanState(hashNode)), &TTSOpsMinimalTuple);
-	ExecForceStoreMinimalTuple(slot->tts_ops->copy_minimal_tuple, econtext->ecxt_innertuple, false);
+	// econtext->ecxt_innertuple = MakeTupleTableSlot(ExecGetResultType(outerPlanState(hashNode)), &TTSOpsMinimalTuple);
+	// ExecForceStoreMinimalTuple(slot->tts_ops->copy_minimal_tuple, econtext->ecxt_innertuple, false);
 	// }
+	econtext->ecxt_innertuple = econtext->ecxt_outertuple;
 
 	if (ExecHashGetHashValue(hashtable, econtext, hashkeys,
 								false, hashtable->keepNulls,
