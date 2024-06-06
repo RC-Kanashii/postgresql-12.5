@@ -300,6 +300,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_OuterTupleNum++;
 					// 存放在 hj_OuterCurTuple
 					node->hj_OuterCurTuple = outerTupleSlot;
+					// econtext 也要及时更新
+					econtext->ecxt_outertuple = outerTupleSlot;
 					node->hj_JoinState = HJ_COMPUTE_HASH_VALUE;
 					// 要从头扫描内表的哈希桶
 					node->hj_InnerCurTuple = NULL;
@@ -319,6 +321,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_InnerTupleNum++;
 					// 存放在 hj_InnerCurTuple
 					node->hj_InnerCurTuple = innerTupleSlot;
+					// econtext 也要及时更新
+					econtext->ecxt_innertuple = innerTupleSlot;
 					node->hj_JoinState = HJ_COMPUTE_HASH_VALUE;
 					// 要从头扫描外表的哈希桶
 					node->hj_OuterCurTuple = NULL;
@@ -340,6 +344,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						continue;
 					}
 					node->hj_InnerTupleNum++;
+					// econtext 也要及时更新
+					econtext->ecxt_innertuple = innerTupleSlot;
 					// 要从头扫描外表的哈希桶
 					node->hj_OuterCurTuple = NULL;
 				} else {
@@ -354,6 +360,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						continue;
 					}
 					node->hj_OuterTupleNum++;
+					// econtext 也要及时更新
+					econtext->ecxt_outertuple = outerTupleSlot;
 					// 要从头扫描内表的哈希桶
 					node->hj_InnerCurTuple = NULL;
 				}
@@ -380,7 +388,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				if (node->hj_FetchingFromInner) {
 					// 使用外表的econtext、哈希表和哈希函数
 					hashEcontext = outerHashNode->ps.ps_ExprContext;
-					// 注意要哈希的元组必须放在 econtext->ecxt_outertuple
+					// 注意要哈希的元组必须放在 hashEcontext->ecxt_outertuple
 					hashEcontext->ecxt_outertuple = innerTupleSlot;
 					hashEcontext->ecxt_innertuple = hashEcontext->ecxt_outertuple;
 					
@@ -420,7 +428,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				}
 
 				// 要事先把 hashEcontext->ecxt_outertuple 转移到 econtext->ecxt_outertuple 中
-				econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
+				// econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
 
 				// FALL THROUGH
 
@@ -493,11 +501,11 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						// 而查询到的元组存放在 ecxt_innertuple
 						// 当 hj_FetchingFromInner == true 时，这会导致投影后左右表内容颠倒
 						// 因此要交换 ecxt_outertuple 和 ecxt_innertuple
-						if (node->hj_FetchingFromInner) {
-							TupleTableSlot *tmp = econtext->ecxt_innertuple;
-							econtext->ecxt_innertuple = econtext->ecxt_outertuple;
-							econtext->ecxt_outertuple = tmp;
-						}
+						// if (node->hj_FetchingFromInner) {
+						// 	TupleTableSlot *tmp = econtext->ecxt_innertuple;
+						// 	econtext->ecxt_innertuple = econtext->ecxt_outertuple;
+						// 	econtext->ecxt_outertuple = tmp;
+						// }
 
 						TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
 						// 强制获取元组的值，用于调试

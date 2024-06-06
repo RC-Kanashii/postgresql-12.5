@@ -2117,25 +2117,39 @@ ExecScanHashBucket(HashJoinState *hjstate,
 	{
 		if (hashTuple->hashvalue == hashvalue)
 		{
-			TupleTableSlot *inntuple;
+			TupleTableSlot *matchedTuple;
+			// TupleTableSlot *tmp;
 
 			/* insert hashtable's tuple into exec slot so ExecQual sees it */
-			inntuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
+			matchedTuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
 											 hashTupleSlot,
 											//  hjstate->hj_OuterHashTupleSlot,
 											 false);	/* do not pfree */
+
+			slot_getallattrs(matchedTuple);
+
 			// 使用 econtext->ecxt_innertuple 存放结果
-			econtext->ecxt_innertuple = inntuple;
+			// tmp = econtext->ecxt_innertuple;
+			// econtext->ecxt_innertuple = matchedTuple;
+
+			if (hjstate->hj_FetchingFromInner) {
+				econtext->ecxt_outertuple = matchedTuple;
+			} else {
+				econtext->ecxt_innertuple = matchedTuple;
+			}
 
 			if (ExecQualAndReset(hjclauses, econtext))
 			{
 				// 使用 hjstate->hj_InnerCurTuple 或 hj_OuterCurTuple 存放结果
 				// 下次可以接着 hashTuple 继续查找
 				// hjstate->hj_OuterCurTuple = hashTuple;
+				// econtext->ecxt_innertuple = tmp;
 				if (hjstate->hj_FetchingFromInner) {
 					hjstate->hj_OuterCurTuple = hashTuple;
+					// econtext->ecxt_outertuple = matchedTuple;
 				} else {
 					hjstate->hj_InnerCurTuple = hashTuple;
+					// econtext->ecxt_innertuple = matchedTuple;
 				}
 				return true;
 			}
@@ -2183,13 +2197,13 @@ ExecParallelScanHashBucket(HashJoinState *hjstate,
 	{
 		if (hashTuple->hashvalue == hashvalue)
 		{
-			TupleTableSlot *inntuple;
+			TupleTableSlot *matchedTuple;
 
 			/* insert hashtable's tuple into exec slot so ExecQual sees it */
-			inntuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
+			matchedTuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
 											 hjstate->hj_OuterHashTupleSlot,
 											 false);	/* do not pfree */
-			econtext->ecxt_innertuple = inntuple;
+			econtext->ecxt_innertuple = matchedTuple;
 
 			if (ExecQualAndReset(hjclauses, econtext))
 			{
@@ -2269,13 +2283,13 @@ ExecScanHashTableForUnmatched(HashJoinState *hjstate, ExprContext *econtext)
 		{
 			if (!HeapTupleHeaderHasMatch(HJTUPLE_MINTUPLE(hashTuple)))
 			{
-				TupleTableSlot *inntuple;
+				TupleTableSlot *matchedTuple;
 
 				/* insert hashtable's tuple into exec slot */
-				inntuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
+				matchedTuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
 												 hjstate->hj_OuterHashTupleSlot,
 												 false);	/* do not pfree */
-				econtext->ecxt_innertuple = inntuple;
+				econtext->ecxt_innertuple = matchedTuple;
 
 				/*
 				 * Reset temp memory each time; although this function doesn't
