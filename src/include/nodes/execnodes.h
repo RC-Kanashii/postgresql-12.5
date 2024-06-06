@@ -1993,10 +1993,10 @@ typedef struct HashJoinState
 	bool        hj_InnerNotEmpty; // 内表是否不为空
     bool        hj_OuterNotEmpty; // 外表是否不为空
 
-	bool        hj_FetchingFromInner; //CSI3130 true if we fetched tuple from inner relation
+	bool        hj_FetchingFromInner; // 是否是从内表获取元组
 
-	int         hj_FoundByProbingInner; //CSI3130 number of tuples found by probing inner relation
-    int         hj_FoundByProbingOuter; //CSI3130 number of tuples found by probing outer relation
+	int         hj_InnerTupleNum; // 从内表获取的元组数
+    int         hj_OuterTupleNum; // 从外表获取的元组数
 } HashJoinState;
 
 

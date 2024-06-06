@@ -130,6 +130,7 @@
 // 新增
 #define HJ_NEED_NEW_INNER		7
 #define HJ_GET_AND_HASH_TUPLE   8
+#define HJ_COMPUTE_HASH_VALUE   9
 
 /* Returns true if doing null-fill on outer relation */
 #define HJ_FILL_OUTER(hjstate)	((hjstate)->hj_NullInnerTupleSlot != NULL)
@@ -296,9 +297,12 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 						continue;
 					}
+					node->hj_OuterTupleNum++;
 					// 存放在 hj_OuterCurTuple
 					node->hj_OuterCurTuple = outerTupleSlot;
-					node->hj_JoinState = HJ_SCAN_BUCKET;
+					node->hj_JoinState = HJ_COMPUTE_HASH_VALUE;
+					// 要从头扫描内表的哈希桶
+					node->hj_InnerCurTuple = NULL;
 					continue;
 				}
 
@@ -312,9 +316,12 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 						continue;
 					}
+					node->hj_InnerTupleNum++;
 					// 存放在 hj_InnerCurTuple
 					node->hj_InnerCurTuple = innerTupleSlot;
-					node->hj_JoinState = HJ_SCAN_BUCKET;
+					node->hj_JoinState = HJ_COMPUTE_HASH_VALUE;
+					// 要从头扫描外表的哈希桶
+					node->hj_OuterCurTuple = NULL;
 					continue;
 				}
 				
@@ -332,6 +339,9 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 						continue;
 					}
+					node->hj_InnerTupleNum++;
+					// 要从头扫描外表的哈希桶
+					node->hj_OuterCurTuple = NULL;
 				} else {
 					// 存放被哈希的外表元组
 					outerTupleSlot = ExecProcNode((PlanState *) outerHashNode);
@@ -343,6 +353,9 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 						continue;
 					}
+					node->hj_OuterTupleNum++;
+					// 要从头扫描内表的哈希桶
+					node->hj_InnerCurTuple = NULL;
 				}
 
 				/*
@@ -358,11 +371,11 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				node->hj_InnerNotEmpty = false; // 新增
 
 				// 使用另一个哈希函数 f 计算哈希值，并且在另一张表进行探测
-				node->hj_JoinState = HJ_SCAN_BUCKET;
+				node->hj_JoinState = HJ_COMPUTE_HASH_VALUE;
 
 				// FALL THROUGH
 
-			case HJ_SCAN_BUCKET:
+			case HJ_COMPUTE_HASH_VALUE:
 
 				if (node->hj_FetchingFromInner) {
 					// 使用外表的econtext、哈希表和哈希函数
@@ -405,17 +418,21 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 											  &node->hj_OuterCurBucketNo,
 											  &batchno);
 				}
+
+				// 要事先把 hashEcontext->ecxt_outertuple 转移到 econtext->ecxt_outertuple 中
+				econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
+
+				// FALL THROUGH
+
+			case HJ_SCAN_BUCKET:
 				/*
 				 * Scan the selected hash bucket for matches to current outer
 				 */
 				// 执行哈希桶扫描。如果当前外部元组没有匹配的内部元组，则切换到处理外部连接的填充元组状态
 
-				// 要事先把 hashEcontext->ecxt_outertuple 转移到 econtext->ecxt_outertuple 中
-				econtext->ecxt_outertuple = hashEcontext->ecxt_outertuple;
-
 				// 清空 CurTuple
-				node->hj_InnerCurTuple = NULL;
-				node->hj_OuterCurTuple = NULL;
+				// node->hj_InnerCurTuple = NULL;
+				// node->hj_OuterCurTuple = NULL;
 
 				// 使用的是另一张表的哈希函数进行探测
 				// 结果在 econtext->ecxt_innertuple 或者 node->hj_OuterCurTuple 中
@@ -450,7 +467,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						* This is really only needed if HJ_FILL_INNER(node),
 						* but we'll avoid the branch and just set it always.
 						*/
-					HeapTupleHeaderSetMatch(HJTUPLE_MINTUPLE(node->hj_OuterCurTuple));
+					// HeapTupleHeaderSetMatch(HJTUPLE_MINTUPLE(node->hj_OuterCurTuple));
 
 					/* In an antijoin, we never return a matched tuple */
 					// if (node->js.jointype == JOIN_ANTI)
@@ -487,9 +504,12 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						slot_getallattrs(result);
 
 						// 匹配成功，记得依然要切换 node->hj_FetchingFromInner
-						node->hj_FetchingFromInner = !node->hj_FetchingFromInner;
+						// node->hj_FetchingFromInner = !node->hj_FetchingFromInner;
+						// 不要切换
 						// 还要切换状态
-						node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
+						// node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
+						// 不要切换状态和 hj_FetchingFromInner ，要顺着哈希桶继续扫描
+						node->hj_JoinState = HJ_SCAN_BUCKET;
 
 						return result;  //执行投影操作
 					}
@@ -498,10 +518,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				}
 				else
 					InstrCountFiltered1(node, 1);  //连接条件不匹配
-				// 匹配失败，记得依然要切换 node->hj_FetchingFromInner
-				node->hj_FetchingFromInner = !node->hj_FetchingFromInner;
-				// 还要切换状态
-				node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
+				// // 匹配失败，记得依然要切换 node->hj_FetchingFromInner
+				// node->hj_FetchingFromInner = !node->hj_FetchingFromInner;
+				// // 还要切换状态
+				// node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 				break;
 
 			case HJ_FILL_OUTER_TUPLE:
@@ -830,8 +850,8 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	hjstate->hj_InnerEnd = false;
 	hjstate->hj_OuterEnd = false;
 
-	hjstate->hj_FoundByProbingInner = 0;
-	hjstate->hj_FoundByProbingOuter = 0;
+	hjstate->hj_InnerTupleNum = 0;
+	hjstate->hj_OuterTupleNum = 0;
 
 	// 一开始要从内部关系中读取一个元组
 	hjstate->hj_FetchingFromInner = true;
@@ -926,6 +946,7 @@ ExecEndHashJoin(HashJoinState *node)
 		ExecClearTuple(node->hj_InnerTupleSlot);
 	}
 	ExecClearTuple(node->hj_OuterHashTupleSlot);
+	ExecClearTuple(node->hj_InnerHashTupleSlot);
 
 	/*
 	 * clean up subtrees

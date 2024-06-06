@@ -168,6 +168,8 @@ ExecHash(HashState *hashNode)
 	// 把已经类型转换好的 econtext->ecxt_outertuple 传回 slot
 	// 这样可以使 ExecHashJoinImpl 的代码更加简洁
 	slot = econtext->ecxt_outertuple;
+	// 强制获取元组的属性值，方便调试
+	slot_getallattrs(slot);
 	return slot;
 }
 
@@ -2077,14 +2079,16 @@ ExecScanHashBucket(HashJoinState *hjstate,
 	// 如果在构建阶段使用的是内表元组，那么现在应该使用内表元组探测外表
 	if (hjstate->hj_FetchingFromInner) {
 		hashtable = hjstate->hj_OuterHashTable;
-		hashTuple = hjstate->hj_InnerCurTuple;
+		// hashTuple = hjstate->hj_InnerCurTuple;
+		hashTuple = hjstate->hj_OuterCurTuple;
 		hashvalue = hjstate->hj_InnerCurHashValue;
 		curBucketNo = hjstate->hj_InnerCurBucketNo;
 		// 结果元组存放在外表
 		hashTupleSlot = hjstate->hj_OuterHashTupleSlot;
 	} else { // 反之用外表元组探测内表
 		hashtable = hjstate->hj_InnerHashTable;
-		hashTuple = hjstate->hj_OuterCurTuple;
+		// hashTuple = hjstate->hj_OuterCurTuple;
+		hashTuple = hjstate->hj_InnerCurTuple;
 		hashvalue = hjstate->hj_OuterCurHashValue;
 		curBucketNo = hjstate->hj_OuterCurBucketNo;
 		// 结果元组存放在内表
@@ -2125,8 +2129,14 @@ ExecScanHashBucket(HashJoinState *hjstate,
 
 			if (ExecQualAndReset(hjclauses, econtext))
 			{
-				// 使用 hjstate->hj_OuterCurTuple 存放结果
-				hjstate->hj_OuterCurTuple = hashTuple;
+				// 使用 hjstate->hj_InnerCurTuple 或 hj_OuterCurTuple 存放结果
+				// 下次可以接着 hashTuple 继续查找
+				// hjstate->hj_OuterCurTuple = hashTuple;
+				if (hjstate->hj_FetchingFromInner) {
+					hjstate->hj_OuterCurTuple = hashTuple;
+				} else {
+					hjstate->hj_InnerCurTuple = hashTuple;
+				}
 				return true;
 			}
 		}
