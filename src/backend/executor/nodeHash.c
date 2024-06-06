@@ -2063,6 +2063,7 @@ ExecHashGetBucketAndBatch(HashJoinTable hashtable,
  * On success, the inner tuple is stored into hjstate->hj_OuterCurTuple and
  * econtext->ecxt_innertuple, using hjstate->hj_OuterHashTupleSlot as the slot
  * for the latter.
+ * 现在会根据 hj_FetchingFromInner 的值，把结果放在 econtext 对应的位置上
  */
 
 bool
@@ -2079,7 +2080,6 @@ ExecScanHashBucket(HashJoinState *hjstate,
 	// 如果在构建阶段使用的是内表元组，那么现在应该使用内表元组探测外表
 	if (hjstate->hj_FetchingFromInner) {
 		hashtable = hjstate->hj_OuterHashTable;
-		// hashTuple = hjstate->hj_InnerCurTuple;
 		hashTuple = hjstate->hj_OuterCurTuple;
 		hashvalue = hjstate->hj_InnerCurHashValue;
 		curBucketNo = hjstate->hj_InnerCurBucketNo;
@@ -2087,16 +2087,12 @@ ExecScanHashBucket(HashJoinState *hjstate,
 		hashTupleSlot = hjstate->hj_OuterHashTupleSlot;
 	} else { // 反之用外表元组探测内表
 		hashtable = hjstate->hj_InnerHashTable;
-		// hashTuple = hjstate->hj_OuterCurTuple;
 		hashTuple = hjstate->hj_InnerCurTuple;
 		hashvalue = hjstate->hj_OuterCurHashValue;
 		curBucketNo = hjstate->hj_OuterCurBucketNo;
 		// 结果元组存放在内表
 		hashTupleSlot = hjstate->hj_InnerHashTupleSlot;
 	}
-
-	// 转换成 MinimalTupleSlot
-	// econtext->ecxt_outertuple->tts_ops->copy_minimal_tuple(econtext->ecxt_outertuple);
 
 	/*
 	 * hj_CurTuple is the address of the tuple last returned from the current
@@ -2118,7 +2114,6 @@ ExecScanHashBucket(HashJoinState *hjstate,
 		if (hashTuple->hashvalue == hashvalue)
 		{
 			TupleTableSlot *matchedTuple;
-			// TupleTableSlot *tmp;
 
 			/* insert hashtable's tuple into exec slot so ExecQual sees it */
 			matchedTuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
@@ -2128,10 +2123,7 @@ ExecScanHashBucket(HashJoinState *hjstate,
 
 			slot_getallattrs(matchedTuple);
 
-			// 使用 econtext->ecxt_innertuple 存放结果
-			// tmp = econtext->ecxt_innertuple;
-			// econtext->ecxt_innertuple = matchedTuple;
-
+			// 把从哈希桶中找到的元组放在 econtext 对应的位置上
 			if (hjstate->hj_FetchingFromInner) {
 				econtext->ecxt_outertuple = matchedTuple;
 			} else {
@@ -2142,14 +2134,10 @@ ExecScanHashBucket(HashJoinState *hjstate,
 			{
 				// 使用 hjstate->hj_InnerCurTuple 或 hj_OuterCurTuple 存放结果
 				// 下次可以接着 hashTuple 继续查找
-				// hjstate->hj_OuterCurTuple = hashTuple;
-				// econtext->ecxt_innertuple = tmp;
 				if (hjstate->hj_FetchingFromInner) {
 					hjstate->hj_OuterCurTuple = hashTuple;
-					// econtext->ecxt_outertuple = matchedTuple;
 				} else {
 					hjstate->hj_InnerCurTuple = hashTuple;
-					// econtext->ecxt_innertuple = matchedTuple;
 				}
 				return true;
 			}

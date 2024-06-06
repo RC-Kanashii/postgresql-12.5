@@ -438,12 +438,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 */
 				// 执行哈希桶扫描。如果当前外部元组没有匹配的内部元组，则切换到处理外部连接的填充元组状态
 
-				// 清空 CurTuple
-				// node->hj_InnerCurTuple = NULL;
-				// node->hj_OuterCurTuple = NULL;
-
 				// 使用的是另一张表的哈希函数进行探测
-				// 结果在 econtext->ecxt_innertuple 或者 node->hj_OuterCurTuple 中
 				if (!ExecScanHashBucket(node, econtext))
 				{
 					/* out of matches; check for possible outer-join fill */
@@ -497,25 +492,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					// econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
 
 					if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-						// 注意：由于之前 ExecScanHashBucket 要求待检测元组存放在 ecxt_outertuple
-						// 而查询到的元组存放在 ecxt_innertuple
-						// 当 hj_FetchingFromInner == true 时，这会导致投影后左右表内容颠倒
-						// 因此要交换 ecxt_outertuple 和 ecxt_innertuple
-						// if (node->hj_FetchingFromInner) {
-						// 	TupleTableSlot *tmp = econtext->ecxt_innertuple;
-						// 	econtext->ecxt_innertuple = econtext->ecxt_outertuple;
-						// 	econtext->ecxt_outertuple = tmp;
-						// }
-
 						TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
 						// 强制获取元组的值，用于调试
 						slot_getallattrs(result);
 
-						// 匹配成功，记得依然要切换 node->hj_FetchingFromInner
-						// node->hj_FetchingFromInner = !node->hj_FetchingFromInner;
-						// 不要切换
-						// 还要切换状态
-						// node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 						// 不要切换状态和 hj_FetchingFromInner ，要顺着哈希桶继续扫描
 						node->hj_JoinState = HJ_SCAN_BUCKET;
 
@@ -526,10 +506,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				}
 				else
 					InstrCountFiltered1(node, 1);  //连接条件不匹配
-				// // 匹配失败，记得依然要切换 node->hj_FetchingFromInner
-				// node->hj_FetchingFromInner = !node->hj_FetchingFromInner;
-				// // 还要切换状态
-				// node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
 				break;
 
 			case HJ_FILL_OUTER_TUPLE:
