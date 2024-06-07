@@ -378,7 +378,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						// 准备扫描未匹配的内部元组
 						ExecPrepHashTableForUnmatched(node);
 						// 切换到扫描未匹配内部元组的状态
-						node->hj_JoinState = HJ_FILL_INNER_TUPLES;
+						node->hj_JoinState = HJ_FILL_INNER_TUPLE;
 					}
 					else
 						// 切换到需要获取新批次的状态
@@ -572,7 +572,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				}
 				break;
 
-			case HJ_FILL_INNER_TUPLES:  // 处理状态为填充内部元组的情况
+			case HJ_FILL_INNER_TUPLE:  // 处理状态为填充内部元组的情况
 
 				/*
 				 * We have finished a batch, but we are doing right/full join,

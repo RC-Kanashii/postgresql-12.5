@@ -1930,7 +1930,7 @@ typedef struct MergeJoinState
  *		hj_NullInnerTupleSlot	prepared null tuple for left/full outer joins
  *		hj_FirstOuterTupleSlot	first tuple retrieved from outer plan
  *		hj_JoinState			current state of ExecHashJoin state machine
- *		hj_MatchedOuter			true if found a join match for current outer
+ *		hj_Matched			true if found a join match for current outer
  *		hj_OuterNotEmpty		true if outer relation known not empty
  * ----------------
  */
@@ -1982,7 +1982,7 @@ typedef struct HashJoinState
 
 
 	int			hj_JoinState;
-	bool		hj_MatchedOuter;
+	bool		hj_Matched; // 是否找到匹配的元组
 
 	bool        hj_InnerEnd; // 内表是否读取完
     bool        hj_OuterEnd; // 外表是否读取完

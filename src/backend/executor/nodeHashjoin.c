@@ -125,7 +125,7 @@
 #define HJ_NEED_NEW_OUTER		2
 #define HJ_SCAN_BUCKET			3
 #define HJ_FILL_OUTER_TUPLE		4
-#define HJ_FILL_INNER_TUPLES	5
+#define HJ_FILL_INNER_TUPLE	5
 #define HJ_NEED_NEW_BATCH		6
 // 新增
 #define HJ_NEED_NEW_INNER		7
@@ -187,6 +187,9 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 	uint32		outerHashvalue;
 	uint32		innerHashvalue;
 
+	// 结果元组
+	TupleTableSlot *result;
+
 	int			batchno = 0;
 	// ParallelHashJoinState *parallel_state;  // 并行状态
 
@@ -221,7 +224,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 	// parallel_state = outerHashNode->parallel_state; // 使用的是外表的状态
 
 	// 如果是内连接并且有已经匹配的外表元组，可以直接跳过内表的探测过程
-	// if (node->js.jointype == JOIN_INNER && node->hj_MatchedOuter)
+	// if (node->js.jointype == JOIN_INNER && node->hj_Matched)
 	// 	node->hj_NeedNewOuterTuple = true;
 
 	/*
@@ -281,6 +284,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				/* FALL THRU */
 			case HJ_GET_AND_HASH_TUPLE:
 
+				node->hj_Matched = false;  // 重新寻找匹配的元组
+
 				// 先判断内外表是否耗尽
 				if (node->hj_InnerEnd && node->hj_OuterEnd) {
 					// 说明没有匹配结果
@@ -298,8 +303,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						continue;
 					}
 					node->hj_OuterTupleNum++;
-					// 存放在 hj_OuterCurTuple
-					node->hj_OuterCurTuple = outerTupleSlot;
 					// econtext 也要及时更新
 					econtext->ecxt_outertuple = outerTupleSlot;
 					node->hj_JoinState = HJ_COMPUTE_HASH_VALUE;
@@ -319,8 +322,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						continue;
 					}
 					node->hj_InnerTupleNum++;
-					// 存放在 hj_InnerCurTuple
-					node->hj_InnerCurTuple = innerTupleSlot;
 					// econtext 也要及时更新
 					econtext->ecxt_innertuple = innerTupleSlot;
 					node->hj_JoinState = HJ_COMPUTE_HASH_VALUE;
@@ -441,6 +442,17 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				// 使用的是另一张表的哈希函数进行探测
 				if (!ExecScanHashBucket(node, econtext))
 				{
+					// 对于左连接和右连接来说，哪怕没有匹配上，也要填充相应的元组为空，并输出
+					// 左连接
+					if (!node->hj_FetchingFromInner && HJ_FILL_OUTER(node)) {
+						node->hj_JoinState = HJ_FILL_OUTER_TUPLE;
+						continue;
+					}
+					// 右连接
+					else if (node->hj_FetchingFromInner && HJ_FILL_INNER(node)) {
+						node->hj_JoinState = HJ_FILL_INNER_TUPLE;
+						continue;
+					}
 					/* out of matches; check for possible outer-join fill */
 					// 没有找到匹配的元组，下一步应该从另一张表取出元组，进行哈希
 					// 切换探测状态
@@ -461,16 +473,21 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * Only the joinquals determine tuple match status, but all
 				 * quals must pass to actually return the tuple.
 				 */
-				// 如果找到匹配的内部元组，首先测试非哈希条件（即其他过滤条件）
+				// 如果找到匹配的内部元组，首先测试哈希条件
 				if (joinqual == NULL || ExecQual(joinqual, econtext))
 				{
-					node->hj_MatchedOuter = true;  // 标记已找到与外部元组匹配的内部元组
+					node->hj_Matched = true;  // 标记已找到与外部元组匹配的内部元组
 
 					/*
-						* This is really only needed if HJ_FILL_INNER(node),
-						* but we'll avoid the branch and just set it always.
-						*/
-					// HeapTupleHeaderSetMatch(HJTUPLE_MINTUPLE(node->hj_OuterCurTuple));
+					 * This is really only needed if HJ_FILL_INNER(node),
+					 * but we'll avoid the branch and just set it always.
+					*/
+					// 将 hash 表中已经匹配的元组打上标记
+					// 这样可以在填充元组阶段(外连接和全连接需要输出不满足 JOIN 连接条件的的元组)跳过已经匹配的元组
+					if (node->hj_FetchingFromInner)
+						HeapTupleHeaderSetMatch(HJTUPLE_MINTUPLE(node->hj_OuterCurTuple));
+					else
+						HeapTupleHeaderSetMatch(HJTUPLE_MINTUPLE(node->hj_InnerCurTuple));
 
 					/* In an antijoin, we never return a matched tuple */
 					// if (node->js.jointype == JOIN_ANTI)
@@ -492,7 +509,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					// econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
 
 					if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-						TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
+						result = ExecProject(node->js.ps.ps_ProjInfo);
 						// 强制获取元组的值，用于调试
 						slot_getallattrs(result);
 
@@ -506,6 +523,19 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				}
 				else
 					InstrCountFiltered1(node, 1);  //连接条件不匹配
+				
+				// 对于左连接和右连接来说，哪怕没有匹配上，也要填充相应的元组为空，并输出
+				// 左连接
+				if (!node->hj_FetchingFromInner && HJ_FILL_OUTER(node)) {
+					node->hj_JoinState = HJ_FILL_OUTER_TUPLE;
+					continue;
+				}
+				// 右连接
+				else if (node->hj_FetchingFromInner && HJ_FILL_INNER(node)) {
+					node->hj_JoinState = HJ_FILL_INNER_TUPLE;
+					continue;
+				}
+
 				break;
 
 			case HJ_FILL_OUTER_TUPLE:
@@ -517,32 +547,74 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * 当前外部元组已耗尽匹配项，因此检查是否发出一个虚拟的外连接元组。
                  * 不管是否发出一个，下一个状态是NEED_NEW_OUTER
 				 */
-				node->hj_JoinState = HJ_NEED_NEW_OUTER;
+				// node->hj_JoinState = HJ_NEED_NEW_OUTER;
 
-				// 如果外部元组没有匹配过任何内部元组且当前的连接策略要求填充外部元组
-				if (!node->hj_MatchedOuter &&
-					HJ_FILL_OUTER(node))
+				// // 如果外部元组没有匹配过任何内部元组且当前的连接策略要求填充外部元组
+				// if (!node->hj_Matched &&
+				// 	HJ_FILL_OUTER(node))
+				// {
+				// 	/*
+				// 	 * Generate a fake join tuple with nulls for the inner
+				// 	 * tuple, and return it if it passes the non-join quals.
+				// 	 * 生成一个假的连接元组，内部元组部分为NULL，
+			    //      * 如果这个元组通过了非连接条件的测试，则返回它
+				// 	 */
+				// 	// 将执行上下文中的内部元组槽设置为预定义的空元组槽
+				// 	// econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
+
+				// 	// 如果没有其他非连接条件或者其他条件测试通过
+				// 	if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+				// 		TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
+				// 		return result;  // 执行投影操作，生成最终的结果元组
+				// 	}
+				// 	else
+				// 		InstrCountFiltered2(node, 1);  // 如果条件测试未通过，增加过滤统计计数
+				// }
+
+				node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
+				node->hj_FetchingFromInner = true;
+
+				/* modified:如果是左外连接或者全连接时要考虑填充NULL */
+				if(!node->hj_Matched && HJ_FILL_OUTER(node))
 				{
-					/*
-					 * Generate a fake join tuple with nulls for the inner
-					 * tuple, and return it if it passes the non-join quals.
-					 * 生成一个假的连接元组，内部元组部分为NULL，
-			         * 如果这个元组通过了非连接条件的测试，则返回它
-					 */
-					// 将执行上下文中的内部元组槽设置为预定义的空元组槽
-					// econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
-
-					// 如果没有其他非连接条件或者其他条件测试通过
-					if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-						TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
-						return result;  // 执行投影操作，生成最终的结果元组
+					econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
+					if(otherqual == NULL || ExecQual(otherqual,econtext))
+					{	
+						// if(node->js.jointype==JOIN_RIGHT)
+						// {
+						// 	TupleTableSlot *temp = econtext->ecxt_innertuple;
+						// 	econtext->ecxt_innertuple = econtext->ecxt_outertuple;
+						// 	econtext->ecxt_outertuple = temp;
+						// }
+						result = ExecProject(node->js.ps.ps_ProjInfo);
+						slot_getallattrs(result);
+						return result;
 					}
 					else
-						InstrCountFiltered2(node, 1);  // 如果条件测试未通过，增加过滤统计计数
+						InstrCountFiltered2(node,1);
 				}
-				break;
+				continue;
 
-			case HJ_FILL_INNER_TUPLES:  // 处理状态为填充内部元组的情况
+				/*
+				 * Generate a fake join tuple with nulls for the inner
+				 * tuple, and return it if it passes the non-join quals.
+				 * 生成一个假的连接元组，内部元组部分为NULL，
+				 * 如果这个元组通过了非连接条件的测试，则返回它
+				 */
+				// 将执行上下文中的内部元组槽设置为预定义的空元组槽
+				// econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
+
+				// // 如果没有其他非连接条件或者其他条件测试通过
+				// if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+				// 	TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
+				// 	return result;  // 执行投影操作，生成最终的结果元组
+				// }
+				// else
+				// 	InstrCountFiltered2(node, 1);  // 如果条件测试未通过，增加过滤统计计数
+
+				// break;
+
+			case HJ_FILL_INNER_TUPLE:  // 处理状态为填充内部元组的情况
 
 				/*
 				 * We have finished a batch, but we are doing right/full join,
@@ -551,13 +623,13 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 * 我们已经完成了一个批次的处理，但是由于我们正在执行右连接/全连接/右反连接，
 			     * 因此必须在继续下一个批次之前发出哈希表中所有未匹配的内部元组
 				 */
-				if (!ExecScanHashTableForUnmatched(node, econtext))
-				{
-					/* no more unmatched tuples */
-					// 没有更多的未匹配内部元组
-					node->hj_JoinState = HJ_NEED_NEW_BATCH;  // 设置节点状态为“需要新的批次”
-					continue;
-				}
+				// if (!ExecScanHashTableForUnmatched(node, econtext))
+				// {
+				// 	/* no more unmatched tuples */
+				// 	// 没有更多的未匹配内部元组
+				// 	node->hj_JoinState = HJ_NEED_NEW_BATCH;  // 设置节点状态为“需要新的批次”
+				// 	continue;
+				// }
 
 				/*
 				 * Generate a fake join tuple with nulls for the outer tuple,
@@ -569,13 +641,37 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				// econtext->ecxt_outertuple = node->hj_NullOuterTupleSlot;
 
 				// 如果没有其他非连接条件或者其他条件测试通过
-				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-					TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
-					return result;  // 执行投影操作，生成最终的结果元组
+				// if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+				// 	TupleTableSlot *result = ExecProject(node->js.ps.ps_ProjInfo);
+				// 	return result;  // 执行投影操作，生成最终的结果元组
+				// }
+				// else
+				// 	InstrCountFiltered2(node, 1);  // 如果条件测试未通过，增加过滤统计计数
+				// break;  // 结束当前case处理
+
+				node->hj_JoinState = HJ_GET_AND_HASH_TUPLE;
+				node->hj_FetchingFromInner = false;
+
+				/* modified:如果是左外连接或者全连接时要考虑填充NULL */
+				if(!node->hj_Matched && HJ_FILL_INNER(node))
+				{
+					econtext->ecxt_outertuple = node->hj_NullOuterTupleSlot;
+					if(otherqual == NULL || ExecQual(otherqual,econtext))
+					{	
+						// if(node->js.jointype==JOIN_RIGHT)
+						// {
+						// 	TupleTableSlot *temp = econtext->ecxt_innertuple;
+						// 	econtext->ecxt_innertuple = econtext->ecxt_outertuple;
+						// 	econtext->ecxt_outertuple = temp;
+						// }
+						result = ExecProject(node->js.ps.ps_ProjInfo);
+						slot_getallattrs(result);
+						return result;
+					}
+					else
+						InstrCountFiltered2(node,1);
 				}
-				else
-					InstrCountFiltered2(node, 1);  // 如果条件测试未通过，增加过滤统计计数
-				break;  // 结束当前case处理
+				continue;
 
 			case HJ_NEED_NEW_BATCH:
 
@@ -822,7 +918,7 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	hjstate->hj_Collations = node->hashcollations;
 
 	hjstate->hj_JoinState = HJ_BUILD_HASHTABLE;
-	hjstate->hj_MatchedOuter = false;
+	hjstate->hj_Matched = false;
 
 	// 内外表为空
 	hjstate->hj_OuterNotEmpty = false;
@@ -867,7 +963,7 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	((HashState *) outerPlanState(hjstate))->hashkeys = lclauses;
 
 	hjstate->hj_JoinState = HJ_BUILD_HASHTABLE;
-	hjstate->hj_MatchedOuter = false;
+	hjstate->hj_Matched = false;
 	hjstate->hj_OuterNotEmpty = false;
 
 	return hjstate;
@@ -1417,7 +1513,7 @@ ExecReScanHashJoin(HashJoinState *node)
 	node->hj_OuterCurSkewBucketNo = INVALID_SKEW_BUCKET_NO;
 	node->hj_OuterCurTuple = NULL;
 
-	node->hj_MatchedOuter = false;
+	node->hj_Matched = false;
 	node->hj_FirstOuterTupleSlot = NULL;
 
 	/*
