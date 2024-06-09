@@ -2315,7 +2315,7 @@ typedef struct SharedHashInfo
  *	 HashState information
  * ----------------
  */
-/// 新增 hj_CurTuple，用于保存当前被插入到哈希表中的元组
+// 新增 hj_CurTuple，用于保存当前被插入到哈希表中的元组
 typedef struct HashState
 {
 	PlanState	ps;				/* its first field is NodeTag */
