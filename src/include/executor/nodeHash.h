@@ -34,8 +34,7 @@ extern void ExecHashTableDetachBatch(HashJoinTable hashtable);
 extern void ExecParallelHashTableSetCurrentBatch(HashJoinTable hashtable,
 												 int batchno);
 
-// 新增功能：返回 hashTuple，方便在 HJ_SCAN_BUCKET 阶段给匹配上的元组打标记
-extern HashJoinTuple ExecHashTableInsert(HashJoinTable hashtable,
+extern void ExecHashTableInsert(HashJoinTable hashtable,
 								TupleTableSlot *slot,
 								uint32 hashvalue);
 extern void ExecParallelHashTableInsert(HashJoinTable hashtable,
@@ -59,6 +58,7 @@ extern bool ExecParallelScanHashBucket(HashJoinState *hjstate, ExprContext *econ
 extern void ExecPrepHashTableForUnmatched(HashJoinState *hjstate);
 extern bool ExecScanHashTableForUnmatched(HashJoinState *hjstate,
 										  ExprContext *econtext);
+extern bool ExecScanOutHashTableForUnmatched(HashJoinState *hjstate, ExprContext *econtext);
 extern void ExecHashTableReset(HashJoinTable hashtable);
 extern void ExecHashTableResetMatchFlags(HashJoinTable hashtable);
 extern void ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,

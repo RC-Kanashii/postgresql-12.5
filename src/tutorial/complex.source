@@ -224,5 +224,5 @@ SELECT * from test_complex where a > '(56.0,-22.5)';
 
 
 -- clean up the example
---DROP TABLE test_complex;
---DROP TYPE complex CASCADE;
+DROP TABLE test_complex;
+DROP TYPE complex CASCADE;
