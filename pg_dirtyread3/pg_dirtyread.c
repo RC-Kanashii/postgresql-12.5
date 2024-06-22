@@ -81,32 +81,36 @@ Datum dirtyread(PG_FUNCTION_ARGS)
 	funcctx = SRF_PERCALL_SETUP();
 	inter_call_data = (dirtyread_ctx_state *)funcctx->user_fctx;
 
+	// 遍历表中的元组
 	while ((tuple = heap_getnext(inter_call_data->scan, ForwardScanDirection)) != NULL)
 	{
 		xmin = HeapTupleHeaderGetXmin(tuple->t_data);
 		xmax = HeapTupleHeaderGetUpdateXid(tuple->t_data);
 
-		// if (txn_id < xmin) {
-		// 	SRF_RETURN_NEXT(funcctx, heap_copy_tuple_as_datum(tuple, inter_call_data->desc));
-		// }
+		// 未设置 txn_id，直接输出所有的快照
+		if (txn_id == 0) {
+			SRF_RETURN_NEXT(funcctx, heap_copy_tuple_as_datum(tuple, inter_call_data->desc));
+		}
 
-		// 如果无法获取 xmax
-		if (tuple->t_data->t_infomask & HEAP_XMAX_INVALID) {
-			if (txn_id >= xmin) {
-				datum = heap_copy_tuple_as_datum(tuple, inter_call_data->desc);
-				SRF_RETURN_NEXT(funcctx, datum);
-			}
-		} else {
+		// 如果存在 xmax
+		if (!(tuple->t_data->t_infomask & HEAP_XMAX_INVALID)) {
+			if (txn_id >= xmax) {
+				continue;
+			} 
 			if (txn_id >= xmin && txn_id < xmax) {
-				datum = heap_copy_tuple_as_datum(tuple, inter_call_data->desc);
-				SRF_RETURN_NEXT(funcctx, datum);
+				SRF_RETURN_NEXT(funcctx, heap_copy_tuple_as_datum(tuple, inter_call_data->desc));
+			}
+		// 如果不存在 xmax
+		} else {
+			if (txn_id >= xmin) {
+				SRF_RETURN_NEXT(funcctx, heap_copy_tuple_as_datum(tuple, inter_call_data->desc));
 			}
 		}
 	}
-	// else
-	// {
-		heap_endscan(inter_call_data->scan);
-		table_close(inter_call_data->rel, AccessShareLock);
-		SRF_RETURN_DONE(funcctx);
-	// }
+
+	// 元组已经遍历完了
+	// txn_id = 0;
+	heap_endscan(inter_call_data->scan);
+	table_close(inter_call_data->rel, AccessShareLock);
+	SRF_RETURN_DONE(funcctx);
 }
