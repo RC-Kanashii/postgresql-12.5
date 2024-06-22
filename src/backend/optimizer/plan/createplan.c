@@ -1019,6 +1019,10 @@ create_join_plan(PlannerInfo *root, JoinPath *best_path)
 												 (HashPath *) best_path);
 			break;
 		//在此处添加你的实现。你需要在这里调用create_symhashjoin_plan函数来创建一个symhashjoin_plan
+		case T_SymHashJoin:
+			plan = (Plan *) create_symhashjoin_plan(root,
+												 (HashPath *) best_path);
+			break;
 		case T_NestLoop:
 			plan = (Plan *) create_nestloop_plan(root,
 												 (NestPath *) best_path);
@@ -4386,7 +4390,179 @@ create_symhashjoin_plan(PlannerInfo *root,
 	//hashjoin需要调用make_hash函数将inner_plan转化为hash_plan类型，而symHashjoin需要将二者都转化为hash_plan类型
 	//makeHashjoin函数是修改过的，添加了一个判定参数，用于判定当前生成的plan类型是Hashjoin还是symHashjoin
 	//在此处添加你的实现,可以参照create_hashjoin_plan
+	HashJoin   *join_plan;
+	// Hash	   *hash_plan;
+	Plan	   *outer_plan;
+	Plan	   *inner_plan;
+	List	   *tlist = build_path_tlist(root, &best_path->jpath.path);
+	List	   *joinclauses;
+	List	   *otherclauses;
+	List	   *hashclauses;
+	List	   *hashoperators = NIL;
+	List	   *hashcollations = NIL;
 
+	// 内外表的哈希键
+	List	   *inner_hashkeys = NIL;
+	List	   *outer_hashkeys = NIL;
+
+	Oid			skewTable = InvalidOid;
+	AttrNumber	skewColumn = InvalidAttrNumber;
+	bool		skewInherit = false;
+	ListCell   *lc;
+	// 新增内部哈希计划和外部哈希计划，用于建立哈希表
+	Hash	   *inner_hash_plan;
+	Hash	   *outer_hash_plan;
+
+	/*
+	 * HashJoin can project, so we don't have to demand exact tlists from the
+	 * inputs.  However, it's best to request a small tlist from the inner
+	 * side, so that we aren't storing more data than necessary.  Likewise, if
+	 * we anticipate batching, request a small tlist from the outer side so
+	 * that we don't put extra data in the outer batch files.
+	 */
+	outer_plan = create_plan_recurse(root, best_path->jpath.outerjoinpath,
+									 (best_path->num_batches > 1) ? CP_SMALL_TLIST : 0);
+
+	inner_plan = create_plan_recurse(root, best_path->jpath.innerjoinpath,
+									 CP_SMALL_TLIST);
+
+	/* Sort join qual clauses into best execution order */
+	joinclauses = order_qual_clauses(root, best_path->jpath.joinrestrictinfo);
+	/* There's no point in sorting the hash clauses ... */
+
+	/* Get the join qual clauses (in plain expression form) */
+	/* Any pseudoconstant clauses are ignored here */
+	if (IS_OUTER_JOIN(best_path->jpath.jointype))
+	{
+		extract_actual_join_clauses(joinclauses,
+									best_path->jpath.path.parent->relids,
+									&joinclauses, &otherclauses);
+	}
+	else
+	{
+		/* We can treat all clauses alike for an inner join */
+		joinclauses = extract_actual_clauses(joinclauses, false);
+		otherclauses = NIL;
+	}
+
+	/*
+	 * Remove the hashclauses from the list of join qual clauses, leaving the
+	 * list of quals that must be checked as qpquals.
+	 */
+	hashclauses = get_actual_clauses(best_path->path_hashclauses);
+	joinclauses = list_difference(joinclauses, hashclauses);
+
+	/*
+	 * Replace any outer-relation variables with nestloop params.  There
+	 * should not be any in the hashclauses.
+	 */
+	if (best_path->jpath.path.param_info)
+	{
+		joinclauses = (List *)
+			replace_nestloop_params(root, (Node *) joinclauses);
+		otherclauses = (List *)
+			replace_nestloop_params(root, (Node *) otherclauses);
+	}
+
+	/*
+	 * Rearrange hashclauses, if needed, so that the outer variable is always
+	 * on the left.
+	 */
+	hashclauses = get_switched_clauses(best_path->path_hashclauses,
+									   best_path->jpath.outerjoinpath->parent->relids);
+
+	/*
+	 * If there is a single join clause and we can identify the outer variable
+	 * as a simple column reference, supply its identity for possible use in
+	 * skew optimization.  (Note: in principle we could do skew optimization
+	 * with multiple join clauses, but we'd have to be able to determine the
+	 * most common combinations of outer values, which we don't currently have
+	 * enough stats for.)
+	 */
+	if (list_length(hashclauses) == 1)
+	{
+		OpExpr	   *clause = (OpExpr *) linitial(hashclauses);
+		Node	   *node;
+
+		Assert(is_opclause(clause));
+		node = (Node *) linitial(clause->args);
+		if (IsA(node, RelabelType))
+			node = (Node *) ((RelabelType *) node)->arg;
+		if (IsA(node, Var))
+		{
+			Var		   *var = (Var *) node;
+			RangeTblEntry *rte;
+
+			rte = root->simple_rte_array[var->varno];
+			if (rte->rtekind == RTE_RELATION)
+			{
+				skewTable = rte->relid;
+				skewColumn = var->varattno;
+				skewInherit = rte->inh;
+			}
+		}
+	}
+
+	/*
+	 * Collect hash related information. The hashed expressions are
+	 * deconstructed into outer/inner expressions, so they can be computed
+	 * separately (inner expressions are used to build the hashtable via Hash,
+	 * outer expressions to perform lookups of tuples from HashJoin's outer
+	 * plan in the hashtable). Also collect operator information necessary to
+	 * build the hashtable.
+	 */
+	foreach(lc, hashclauses)
+	{
+		OpExpr	   *hclause = lfirst_node(OpExpr, lc);
+
+		hashoperators = lappend_oid(hashoperators, hclause->opno);
+		hashcollations = lappend_oid(hashcollations, hclause->inputcollid);
+		outer_hashkeys = lappend(outer_hashkeys, linitial(hclause->args));
+		inner_hashkeys = lappend(inner_hashkeys, lsecond(hclause->args));
+	}
+
+	/*
+	 * Build the hash node and hash join node.
+	 */
+	// 创建内表和外表各自的哈希表，不使用 skew table
+	inner_hash_plan = make_hash(inner_plan,
+						  inner_hashkeys,
+						  InvalidOid,
+						  InvalidAttrNumber,
+						  false);
+	outer_hash_plan = make_hash(outer_plan,
+						  outer_hashkeys,
+						  InvalidOid,
+						  InvalidAttrNumber,
+						  false);
+
+	/*
+	 * Set Hash node's startup & total costs equal to total cost of input
+	 * plan; this only affects EXPLAIN display not decisions.
+	 */
+	copy_plan_costsize(&inner_hash_plan->plan, inner_plan);
+	copy_plan_costsize(&outer_hash_plan->plan, outer_plan);
+
+	// todo: 成本估计可以设置成任意值
+	inner_hash_plan->plan.startup_cost = inner_hash_plan->plan.total_cost;
+	outer_hash_plan->plan.startup_cost = outer_hash_plan->plan.total_cost;
+
+	join_plan = make_hashjoin(tlist,
+							  joinclauses,
+							  otherclauses,
+							  hashclauses,
+							  hashoperators,
+							  hashcollations,
+							  outer_hashkeys,
+							  (Plan *) outer_hash_plan,
+							  (Plan *) inner_hash_plan,
+							  best_path->jpath.jointype,
+							  best_path->jpath.inner_unique,
+							  true);
+
+	copy_generic_path_info(&join_plan->join.plan, &best_path->jpath.path);
+
+	return join_plan;
 }
 
 static HashJoin *

@@ -2017,7 +2017,59 @@ ExecScanHashBucket(HashJoinState *hjstate,
 		//需要参考hjstate数据结构
 		//要点在于确定正确的hash表、hash元组和hashvalue
 		// }
-		;
+		// 如果在构建阶段使用的是内表元组，那么现在应该使用内表元组探测外表
+		if (hjstate->scanBucket) {
+			hashtable = hjstate->hj_outerHashTable;
+			hashTuple = hjstate->hj_CurOutTuple;
+			hashvalue = hjstate->hj_CurOutHashValue;
+		} else { // 反之用外表元组探测内表
+			hashtable = hjstate->hj_HashTable;
+			hashTuple = hjstate->hj_CurTuple;
+			hashvalue = hjstate->hj_CurHashValue;
+		}
+
+		if (hashTuple != NULL)
+		hashTuple = hashTuple->next.unshared;
+		else
+			hashTuple = hashtable->buckets.unshared[hjstate->hj_CurBucketNo];
+
+		while (hashTuple != NULL)
+		{
+			if (hashTuple->hashvalue == hashvalue)
+			{
+				TupleTableSlot *matchedTuple;
+
+				/* insert hashtable's tuple into exec slot so ExecQual sees it */
+				matchedTuple = ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
+												hjstate->hj_HashTupleSlot,
+												//  hjstate->hj_OuterHashTupleSlot,
+												false);	/* do not pfree */
+
+				slot_getallattrs(matchedTuple);
+
+				// 把从哈希桶中找到的元组放在 econtext 对应的位置上
+				if (hjstate->scanBucket) {
+					econtext->ecxt_outertuple = matchedTuple;
+				} else {
+					econtext->ecxt_innertuple = matchedTuple;
+				}
+
+				if (ExecQualAndReset(hjclauses, econtext))
+				{
+					// 使用 hjstate->hj_InnerCurTuple 或 hj_OuterCurTuple 存放结果
+					// 下次可以接着 hashTuple 继续查找
+					if (hjstate->scanBucket) {
+						hjstate->hj_CurOutTuple = hashTuple;
+					} else {
+						hjstate->hj_CurTuple = hashTuple;
+					}
+					return true;
+				}
+			}
+
+			hashTuple = hashTuple->next.unshared;
+		}
+
 	}else{ //如果是hashjoin，应该利用原有的扫描hash桶算法
 		if (hashTuple != NULL)
 			hashTuple = hashTuple->next.unshared;

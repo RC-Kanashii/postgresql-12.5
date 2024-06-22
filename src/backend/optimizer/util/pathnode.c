@@ -2586,6 +2586,46 @@ create_symhashjoin_path(PlannerInfo *root,
 	//需要调用final_cost_hashjoin函数
 	//注意：创造的node类型为T_SymHashJoin
 
+	pathnode->jpath.path.parent = joinrel;
+	pathnode->jpath.path.pathtarget = joinrel->reltarget;
+	pathnode->jpath.path.param_info =
+		get_joinrel_parampathinfo(root,
+								  joinrel,
+								  outer_path,
+								  inner_path,
+								  extra->sjinfo,
+								  required_outer,
+								  &restrict_clauses);
+	pathnode->jpath.path.parallel_aware =
+		joinrel->consider_parallel && parallel_hash;
+	pathnode->jpath.path.parallel_safe = joinrel->consider_parallel &&
+		outer_path->parallel_safe && inner_path->parallel_safe;
+	/* This is a foolish way to estimate parallel_workers, but for now... */
+	pathnode->jpath.path.parallel_workers = outer_path->parallel_workers;
+
+	/*
+	 * A hashjoin never has pathkeys, since its output ordering is
+	 * unpredictable due to possible batching.  XXX If the inner relation is
+	 * small enough, we could instruct the executor that it must not batch,
+	 * and then we could assume that the output inherits the outer relation's
+	 * ordering, which might save a sort step.  However there is considerable
+	 * downside if our estimate of the inner relation size is badly off. For
+	 * the moment we don't risk it.  (Note also that if we wanted to take this
+	 * seriously, joinpath.c would have to consider many more paths for the
+	 * outer rel than it does now.)
+	 */
+	pathnode->jpath.path.pathkeys = NIL;
+	pathnode->jpath.jointype = jointype;
+	pathnode->jpath.inner_unique = extra->inner_unique;
+	pathnode->jpath.outerjoinpath = outer_path;
+	pathnode->jpath.innerjoinpath = inner_path;
+	pathnode->jpath.joinrestrictinfo = restrict_clauses;
+	pathnode->path_hashclauses = hashclauses;
+	/* final_cost_hashjoin will fill in pathnode->num_batches */
+
+	final_cost_symhashjoin(root, pathnode, workspace, extra);
+
+	return pathnode;
 }
 
 
