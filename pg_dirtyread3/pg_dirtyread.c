@@ -50,6 +50,8 @@ Datum dirtyread(PG_FUNCTION_ARGS)
 	FuncCallContext *funcctx;
 	dirtyread_ctx_state *inter_call_data = NULL;
 	HeapTuple tuple;
+	TransactionId xmin, xmax; // 遍历表的当前元组的xmin、xmax
+	Datum datum;
 
 	if (SRF_IS_FIRSTCALL())
 	{
@@ -79,14 +81,32 @@ Datum dirtyread(PG_FUNCTION_ARGS)
 	funcctx = SRF_PERCALL_SETUP();
 	inter_call_data = (dirtyread_ctx_state *)funcctx->user_fctx;
 
-	if ((tuple = heap_getnext(inter_call_data->scan, ForwardScanDirection)) != NULL)
+	while ((tuple = heap_getnext(inter_call_data->scan, ForwardScanDirection)) != NULL)
 	{
-		SRF_RETURN_NEXT(funcctx, heap_copy_tuple_as_datum(tuple, inter_call_data->desc));
+		xmin = HeapTupleHeaderGetXmin(tuple->t_data);
+		xmax = HeapTupleHeaderGetUpdateXid(tuple->t_data);
+
+		// if (txn_id < xmin) {
+		// 	SRF_RETURN_NEXT(funcctx, heap_copy_tuple_as_datum(tuple, inter_call_data->desc));
+		// }
+
+		// 如果无法获取 xmax
+		if (tuple->t_data->t_infomask & HEAP_XMAX_INVALID) {
+			if (txn_id >= xmin) {
+				datum = heap_copy_tuple_as_datum(tuple, inter_call_data->desc);
+				SRF_RETURN_NEXT(funcctx, datum);
+			}
+		} else {
+			if (txn_id >= xmin && txn_id < xmax) {
+				datum = heap_copy_tuple_as_datum(tuple, inter_call_data->desc);
+				SRF_RETURN_NEXT(funcctx, datum);
+			}
+		}
 	}
-	else
-	{
+	// else
+	// {
 		heap_endscan(inter_call_data->scan);
 		table_close(inter_call_data->rel, AccessShareLock);
 		SRF_RETURN_DONE(funcctx);
-	}
+	// }
 }

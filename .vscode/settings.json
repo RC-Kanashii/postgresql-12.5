@@ -6,7 +6,10 @@
     "hashjoin.h": "c",
     "nodehash.h": "c",
     "nodehashjoin.h": "c",
-    "execnodes.h": "c"
+    "execnodes.h": "c",
+    "__tuple": "c",
+    "tuple": "c",
+    "htup_details.h": "c"
   },
   "C_Cpp_Runner.cCompilerPath": "gcc",
   "C_Cpp_Runner.cppCompilerPath": "/usr/bin/clang++",
